@@ -18,7 +18,7 @@ from .utils import (
     process_batch_results, process_batch_results_offline, 
     weighted_majority_vote, compute_all_voting_results
 )
-
+from .processors import WrappedPerReqLogitsProcessor
 
 
 class DeepThinkLLM:
@@ -45,7 +45,7 @@ class DeepThinkLLM:
         
         print("Initializing vLLM engine...")
         llm_init_start = time.time()
-        self.llm = LLM(model=model, **default_kwargs)
+        self.llm = LLM(model=model, logits_processors=[WrappedPerReqLogitsProcessor], **default_kwargs)
         llm_init_time = time.time() - llm_init_start
         print(f"vLLM engine initialized in {llm_init_time:.2f} seconds")
         
@@ -203,6 +203,12 @@ class DeepThinkLLM:
         final_gen_start = time.time()
         final_params = copy.deepcopy(sampling_params)
         final_params.n = total_budget - warmup_traces
+        final_params.extra_args = {
+            "conf_threshold": output.conf_bar,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "conf_group_size": window_size,
+            "conf_topk": 20,
+        }
         
         final_outputs = self.llm.generate([prompt], final_params)
         output.final_gen_time = time.time() - final_gen_start
