@@ -9,14 +9,85 @@ import json
 import pickle
 import argparse
 from datetime import datetime
-from deepconf import DeepThinkLLM, prepare_prompt, prepare_prompt_gpt, equal_func
+from deepconf import DeepThinkLLM
 from vllm import SamplingParams
+import time 
+from dynasor.core.evaluator import math_equal
+
+# ============= PROMPT PREPARATION FUNCTIONS =============
+
+def prepare_prompt(question: str, tokenizer, model_type: str = "deepseek") -> str:
+    """Prepare prompt for a single question"""
+    if model_type == "deepseek":
+        # Format prompt using chat template for DeepSeek
+        messages = [
+            {"role": "system", "content": "该助手为DeepSeek-R1，由深度求索公司创造。\n今天是2025年5月28日，星期一。\n"},
+            {"role": "user", "content": question}
+        ]
+    else:
+        # Format for GPT-like models
+        messages = [
+            {"role": "user", "content": question}
+        ]
+    
+    full_prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    
+    return full_prompt
+
+
+def prepare_prompt_gpt(question: str, tokenizer, reasoning_effort: str = "high") -> str:
+    """Prepare prompt for GPT models with reasoning effort"""
+    messages = [
+        {"role": "user", "content": question}
+    ]
+    
+    full_prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        reasoning_effort=reasoning_effort,
+        add_generation_prompt=True
+    )
+    
+    return full_prompt
+
+
+def quick_parse(text: str) -> str:
+    """Parse LaTeX text content"""
+    if '\\text{' in text and '}' in text:
+        # Find all occurrences of \text{...} and remove them
+        while '\\text{' in text:
+            start = text.find('\\text{')
+            if start == -1:
+                break
+            end = text.find('}', start)
+            if end == -1:
+                break
+            # Replace \text{content} with just content
+            content = text[start + 6:end]  # 6 is length of '\text{'
+            text = text[:start] + content + text[end + 1:]
+    return text
+
+
+def equal_func(answer: str, ground_truth: str) -> bool:
+    """Check if answer equals ground truth"""
+    answer = quick_parse(answer)
+    if len(answer) == 1 and answer.isalpha() and len(ground_truth) == 1 and ground_truth.isalpha():
+        return answer.lower() == ground_truth.lower()
+    else:
+        return math_equal(answer, ground_truth)
+
 
 def evaluate_voting_results(voting_results, ground_truth):
     """Evaluate voting results against ground truth"""
     evaluation = {}
     
     for method, result in voting_results.items():
+        if "top10" in method:
+            continue
         if result and result.get('answer'):
             try:
                 is_correct = equal_func(result['answer'], ground_truth)
@@ -62,6 +133,7 @@ def evaluate_confidence_methods(result, ground_truth):
                 'correct': correct_above,
                 'accuracy': correct_above / len(warmup_above_threshold)
             }
+
     
     # Evaluate final traces (excluding early stopped)
     if result.final_traces:
@@ -123,10 +195,10 @@ def print_evaluation_report(question, ground_truth, evaluation, confidence_eval,
             print(f"{method_name:<20} {total:<8} {correct:<8} {accuracy:<10.1%}")
     
     # Count individual trace accuracy
-    correct_traces = sum(1 for trace in result.all_traces 
+    correct_traces = sum(1 for trace in result.all_voting_traces 
                         if trace.get('extracted_answer') and 
                         equal_func(trace['extracted_answer'], ground_truth))
-    total_valid_traces = sum(1 for trace in result.all_traces if trace.get('extracted_answer'))
+    total_valid_traces = sum(1 for trace in result.all_voting_traces if trace.get('extracted_answer'))
     
     if total_valid_traces > 0:
         trace_accuracy = correct_traces / total_valid_traces

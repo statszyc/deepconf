@@ -23,15 +23,22 @@ pip install -r requirements.txt
 
 ```python
 from deepconf import DeepThinkLLM
-from deepconf import prepare_prompt, equal_func
 
 # Initialize model
 deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
 
 # Prepare prompt
 question = "What is the square root of 144?"
-ground_truth = "12"
-prompt = prepare_prompt(question, deep_llm.tokenizer, "deepseek")
+
+messages = [
+    {"role": "user", "content": question}
+]
+    
+prompt = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,
+    add_generation_prompt=True
+)
 
 # Run offline mode with multiple voting
 result = deep_llm.deepthink(
@@ -44,8 +51,7 @@ result = deep_llm.deepthink(
 # Evaluate results
 for method, method_result in result.voting_results.items():
     if method_result and method_result.get('answer'):
-        is_correct = equal_func(method_result['answer'], ground_truth)
-        print(f"{method}: {method_result['answer']} ({'✓' if is_correct else '✗'})")
+        print(f"{method}: {method_result['answer']}")
 ```
 
 ## Architecture
@@ -64,7 +70,15 @@ Uses warmup traces to establish confidence thresholds, then applies early stoppi
 
 ```python
 # Prepare prompt
-prompt = prepare_prompt(question, tokenizer, "deepseek")
+messages = [
+    {"role": "user", "content": question}
+]
+
+prompt = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,
+    add_generation_prompt=True
+)
 
 # Run online mode
 result = deep_llm.deepthink(
@@ -80,7 +94,17 @@ Generates all traces at once, then analyzes with multiple voting methods:
 
 ```python
 # Prepare prompt
-prompt = prepare_prompt_gpt(question, tokenizer, "high")
+messages = [
+    {"role": "user", "content": question}
+]
+
+prompt = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,
+    reasoning_effort=reasoning_effort,
+    add_generation_prompt=True
+)
+    
 
 # Run offline mode
 result = deep_llm.deepthink(
@@ -223,7 +247,16 @@ ground_truth = "1024"
 
 # Initialize and prepare
 deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
-prompt = prepare_prompt(question, deep_llm.tokenizer, "deepseek")
+messages = [
+    {"role": "user", "content": question}
+]
+
+prompt = tokenizer.apply_chat_template(
+    messages,
+    tokenize=False,
+    add_generation_prompt=True
+)
+
 
 # Run inference
 result = deep_llm.deepthink(prompt=prompt, mode="offline", budget=32)

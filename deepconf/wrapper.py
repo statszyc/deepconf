@@ -107,7 +107,15 @@ class DeepThinkLLM:
         output.mode = mode
         output.llm_init_time = self.init_times['llm_init_time']
         output.tokenizer_init_time = self.init_times['tokenizer_init_time']
-        
+
+        if sampling_params is None:
+            sampling_params = SamplingParams(
+                temperature=0.6,
+                top_p=0.95,
+                max_tokens=32000,
+                logprobs=20,
+            )
+            
         # Set configuration
         output.config = {
             "model": self.model_name,
@@ -140,7 +148,10 @@ class DeepThinkLLM:
         if compute_multiple_voting and output.all_traces:
             print("Computing multiple voting results...")
             voting_start = time.time()
-            output.voting_results = compute_all_voting_results(output.all_traces)
+            if output.mode == "online":
+                output.voting_results = compute_all_voting_results(output.all_voting_traces)
+            else:   
+                output.voting_results = compute_all_voting_results(output.all_traces)
             
             # Set the primary answer to the majority vote result
             if 'majority' in output.voting_results and output.voting_results['majority']:
@@ -176,10 +187,12 @@ class DeepThinkLLM:
         print(f"Starting warmup phase...")
         warmup_gen_start = time.time()
         
+
         # Generate warmup traces
         warmup_params = copy.deepcopy(sampling_params) 
         warmup_params.n = warmup_traces
         warmup_params.logprobs = 20
+        warmup_params.seed = int(time.time())
 
         warmup_outputs = self.llm.generate([prompt], warmup_params)
         output.warmup_gen_time = time.time() - warmup_gen_start
@@ -202,6 +215,7 @@ class DeepThinkLLM:
         print(f"Starting final phase...")
         final_gen_start = time.time()
         final_params = copy.deepcopy(sampling_params)
+        final_params.seed = int(time.time())
         final_params.n = total_budget - warmup_traces
         final_params.extra_args = {
             "conf_threshold": output.conf_bar,
@@ -252,6 +266,7 @@ class DeepThinkLLM:
         
 
         sampling_params.n = budget
+        sampling_params.seed = int(time.time())
         
         # Generate all traces at once
         print(f"Generating {budget} traces...")
@@ -280,11 +295,13 @@ class DeepThinkLLM:
         voting_weights = []
         
         if output.mode == "online":
+            output.all_voting_traces = []
             # Add warmup traces above threshold
             for trace in output.warmup_traces:
                 if trace.get('min_conf', 0) >= output.conf_bar and trace.get('extracted_answer'):
                     voting_answers.append(trace['extracted_answer'])
                     voting_weights.append(trace.get('min_conf', 1.0))
+                    output.all_voting_traces.append(trace)
             
             # Add final traces (skip early stopped ones)
             for trace in output.final_traces:
@@ -293,6 +310,7 @@ class DeepThinkLLM:
                 if trace.get('extracted_answer'):
                     voting_answers.append(trace['extracted_answer'])
                     voting_weights.append(trace.get('min_conf', 1.0))
+                    output.all_voting_traces.append(trace)
         else:
             # Offline mode - use all traces with valid answers
             for trace in output.all_traces:
