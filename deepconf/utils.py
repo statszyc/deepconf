@@ -33,7 +33,10 @@ def extract_answer(text: str) -> Optional[str]:
         else:
             a = ans.split("$")[0].strip()
         return a.strip()
+    
     return None
+
+
 
 def compute_confidence(logprobs: List[Dict]) -> List[float]:
     """Compute confidence score from logprobs and return only confidence values"""
