@@ -305,7 +305,11 @@ def process_output(output, window_size: int) -> Dict[str, Any]:
 
 def process_batch_results(batch_outputs, window_size: int) -> Dict[str, Any]:
     """Process batch results from vLLM for a single question"""
-    question_outputs = batch_outputs[0].outputs
+    #print('Osize: ', len(batch_outputs))
+    question_outputs = []
+    for output_list in batch_outputs:
+        question_outputs += output_list.outputs
+    # question_outputs = batch_outputs[0].outputs
     
     # Process all traces for this question
     traces = []
@@ -349,8 +353,11 @@ def process_output_offline(output, window_size: int) -> Dict[str, Any]:
 
 def process_batch_results_offline(batch_outputs, window_size: int) -> Dict[str, Any]:
     """Process batch results from vLLM for offline mode"""
-    question_outputs = batch_outputs[0].outputs
-    
+    # question_outputs = batch_outputs[0].outputs
+    question_outputs = []
+    for output_list in batch_outputs:
+        question_outputs += output_list.outputs
+
     # Process all traces for this question
     traces = []
     total_tokens = 0

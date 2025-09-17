@@ -1,22 +1,24 @@
-# DeepThinkLLM
+
+<div align="center">
+    <h1>Deep Think with Confidence</h1>
+</div>
+
+<div align="center" style="line-height: 1; margin-bottom: 12px;">
+    | <a href="https://jiaweizzhao.github.io/deepconf/">📝 Website</a> 
+    | <a href="https://arxiv.org/abs/2508.15260">📄 Paper</a> 
+    | <a href="https://x.com/jiawzhao/status/1958982524333678877">🐦 Twitter/X</a> 
+    |
+</div>
 
 A powerful framework for enhanced LLM reasoning with confidence-based methods and multiple voting strategies. Supports both online (confidence-based early stopping) and offline (batch generation) modes.
-
-## Features
-
-- **Dual Processing Modes**: Online mode with confidence-based early stopping, and offline mode with batch generation
-- **Multiple Voting Algorithms**: 7 different voting strategies including confidence-weighted voting
-- **Memory Optimized**: Stores only confidence values, not full logprobs
-- **Separated Concerns**: Prompt processing and evaluation handled separately from inference
-- **Comprehensive Analysis**: Built-in performance analysis and comparison tools
-- **Flexible Configuration**: Support for different model types and sampling parameters
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
+pip install -e ./
 ```
 
 ### Basic Usage
@@ -54,192 +56,104 @@ for method, method_result in result.voting_results.items():
         print(f"{method}: {method_result['answer']}")
 ```
 
-## Architecture
-
-### Core Design Philosophy
-The `deepthink` method works like `generate()` - it takes a prepared prompt and returns answers using different voting methods, without knowing about ground truth or evaluation. This separates concerns clearly:
-
-- **Inference**: `DeepThinkLLM.deepthink()` handles generation and voting
-- **Preprocessing**: External prompt preparation using utility functions
-- **Evaluation**: External comparison of results against ground truth
-
-### Processing Modes
-
-#### Online Mode (Confidence-Based)
-Uses warmup traces to establish confidence thresholds, then applies early stopping:
-
-```python
-# Prepare prompt
-messages = [
-    {"role": "user", "content": question}
-]
-
-prompt = tokenizer.apply_chat_template(
-    messages,
-    tokenize=False,
-    add_generation_prompt=True
-)
-
-# Run online mode
-result = deep_llm.deepthink(
-    prompt=prompt,
-    mode="online",
-    warmup_traces=16,
-    total_budget=256
-)
-```
-
-#### Offline Mode (Batch Generation)
-Generates all traces at once, then analyzes with multiple voting methods:
-
-```python
-# Prepare prompt
-messages = [
-    {"role": "user", "content": question}
-]
-
-prompt = tokenizer.apply_chat_template(
-    messages,
-    tokenize=False,
-    reasoning_effort=reasoning_effort,
-    add_generation_prompt=True
-)
-    
-
-# Run offline mode
-result = deep_llm.deepthink(
-    prompt=prompt,
-    mode="offline",
-    budget=512,
-    compute_multiple_voting=True
-)
-```
-
-## Voting Methods
-
-The framework supports 7 different voting strategies:
-
-1. **Simple Majority Vote** - Basic majority voting
-2. **Mean Confidence Weighted** - Weighted by average token confidence
-3. **Tail Confidence Weighted** - Weighted by confidence of last 2048 tokens
-4. **Bottom Window Weighted** - Weighted by bottom 10% of sliding window means
-5. **Min Window Weighted** - Weighted by minimum sliding window confidence
-6. **Top 10% Tail Filtered** - Only top 10% by tail confidence, then weighted
-7. **Top 10% Bottom Window Filtered** - Only top 10% by bottom window confidence, then weighted
-
-## Example Scripts
-
-### Single Question Processing
-
-#### Offline Mode
-```bash
-python examples/example_offline.py --qid 0 --dataset dataset.jsonl --budget 512
-```
-
-#### Online Mode  
-```bash
-python examples/example_online.py --qid 0 --dataset brumo_2025.jsonl --total_budget 256
-```
 
 
-## Prompt Preparation
+## `DeepThinkLLM` Class
 
-The framework provides utility functions for different model types:
+`DeepThinkLLM` is a lightweight wrapper around **vLLM** that extends standard generation with *deep thinking* capabilities.
+It supports two main methods:
 
-```python
-from utils import prepare_prompt, prepare_prompt_gpt
+* **`generate()`** – standard text generation (same as vLLM).
+* **`deepthink()`** – enhanced reasoning with confidence-based methods and voting strategies.
 
-# For DeepSeek models
-prompt = prepare_prompt(question, tokenizer, "deepseek")
+**Inputs**
 
-# For GPT models with reasoning effort
-prompt = prepare_prompt_gpt(question, tokenizer, "high")
-```
+* `model`: model path or name (e.g. `deepseek-ai/DeepSeek-R1-0528-Qwen3-8B`)
+* `**vllm_kwargs`: all standard vLLM initialization parameters are supported, such as
 
-## Evaluation and Analysis
+  * `enable_prefix_caching=True`
+  * `tensor_parallel_size=...`
 
-Both example scripts provide comprehensive evaluation against ground truth:
+This makes it fully compatible with vLLM while adding reasoning-specific extensions.
 
-### Offline Mode Evaluation
-- Individual trace accuracy
-- Voting method comparison  
-- Best performing method identification
-- Performance statistics
 
-### Online Mode Evaluation  
-- Confidence threshold analysis
-- Warmup vs final trace performance
-- Early stopping effectiveness
-- Voting method comparison with confidence metrics
+## `deepthink()` Function
 
-### Analysis Tools
+The `deepthink()` method is the central interface for confidence-based reasoning.
+It takes a **prompt**, optional **sampling parameters**, and a **mode**, with different arguments depending on the mode:
 
-Analyze voting performance across experiments:
+* **Online Mode (Confidence-Based)**
+  Establishes thresholds with warmup traces and applies **early stopping**.
 
-```bash
-python analysis_voting.py --outputs_dir outputs --generate_report
-```
+  * `warmup_traces`: number of calibration runs
+  * `total_budget`: maximum number of traces
 
-## Configuration
+  ```python
+  result = deep_llm.deepthink(
+      prompt=prompt,
+      mode="online",
+      warmup_traces=16,
+      total_budget=256,
+      sampling_params=sampling_params
+  )
+  ```
 
-### Model Types
-- `deepseek`: DeepSeek models with Chinese system prompt
-- `gpt`: GPT-style models with reasoning effort support
+* **Offline Mode (Batch Generation)**
+  Generates all traces at once and applies multiple voting strategies.
 
-### Sampling Parameters
-```python
-from vllm import SamplingParams
+  * `budget`: number of traces
+  * `compute_multiple_voting`: enable all voting methods
 
-custom_params = SamplingParams(
-    temperature=1.0,
-    top_p=0.95,
-    top_k=40,
-    max_tokens=64000
-)
+  ```python
+  result = deep_llm.deepthink(
+      prompt=prompt,
+      mode="offline",
+      budget=512,
+      compute_multiple_voting=True,
+      sampling_params=sampling_params
+  )
+  ```
 
-result = deep_llm.deepthink(
-    prompt=prompt,
-    sampling_params=custom_params
-)
-```
+
+
 
 ## Output Format
 
-Results include comprehensive voting analysis:
+The output of `deepthink()` is returned as a `DeepThinkOutput` dataclass, which organizes results and metadata:
 
-```python
-result = {
-    'final_answer': '12',
-    'voting_results': {
-        'majority': {'answer': '12', 'confidence': None, 'num_votes': 64},
-        'tail_confidence_weighted': {'answer': '12', 'confidence': 15.234, 'num_votes': 64},
-        # ... other voting methods
-    },
-    'all_traces': [...],  # Individual traces with confidence values
-    'timing_stats': {...},
-    'token_stats': {...},
-    'config': {...}
-}
-```
+* **Primary Results**
 
-## Performance Optimization
+  * `final_answer`: final selected answer
+  * `voted_answer`: answer from the default voting method
 
-### Memory Usage
-- Only confidence values stored, not full logprobs
-- Large data structures cleaned up immediately after processing
-- Configurable batch sizes for large-scale experiments
+* **Voting Results**
 
-### Throughput
-- vLLM backend for efficient parallel generation
-- Prefix caching enabled by default
-- Optimized confidence computation using sliding windows
+  * `voting_results`: dictionary of answers and confidences from all voting strategies
+
+* **Traces & Confidence**
+
+  * `all_traces`, `warmup_traces`, `final_traces`: generated reasoning traces
+  * `conf_bar`: confidence threshold (online mode only)
+
+* **Statistics**
+
+  * `total_traces_count`, token usage per stage
+  * timing information (generation, processing, initialization)
+
+* **Config & Metadata**
+
+  * `config`: configuration used for this run
+  * `mode`: online or offline
+  * `timestamp`: run timestamp
+
+This structure makes it easy to analyze answers, voting behavior, confidence, and efficiency in a unified way.
+
 
 ## Examples
 
 ### Single Question Processing with Evaluation
 ```python
 from wrapper import DeepThinkLLM
-from utils import prepare_prompt, equal_func
 
 # Load question data
 question = "What is 2^10?"
@@ -264,7 +178,7 @@ result = deep_llm.deepthink(prompt=prompt, mode="offline", budget=32)
 # Evaluate results
 for method, method_result in result.voting_results.items():
     if method_result:
-        is_correct = equal_func(method_result['answer'], ground_truth)
+        is_correct = int(method_result['answer']) == int(ground_truth)
         print(f"{method}: {is_correct}")
 ```
 
@@ -287,16 +201,17 @@ above_threshold = [t for t in result.warmup_traces if t['min_conf'] >= result.co
 print(f"Traces above threshold: {len(above_threshold)}")
 ```
 
-## Requirements
+### Offline and Online Examples
 
-- Python 3.8+
-- vLLM >= 0.2.0
-- transformers >= 4.30.0
-- numpy
-- pandas
-- tqdm
-- dynasor (for math evaluation)
+see examples folder for more detailed examples.
 
-## License
+## Citation
 
-MIT License - see LICENSE file for details.
+```
+@article{fu2025deep,
+  title={Deep think with confidence},
+  author={Fu, Yichao and Wang, Xuewei and Tian, Yuandong and Zhao, Jiawei},
+  journal={arXiv preprint arXiv:2508.15260},
+  year={2025}
+}
+```

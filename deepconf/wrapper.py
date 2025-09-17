@@ -184,17 +184,19 @@ class DeepThinkLLM:
         processing_start = time.time()
         
         # Warmup phase
-        print(f"Starting warmup phase...")
+        print(f"Starting warmup phase...", sampling_params)
         warmup_gen_start = time.time()
         
 
         # Generate warmup traces
-        warmup_params = copy.deepcopy(sampling_params) 
-        warmup_params.n = warmup_traces
-        warmup_params.logprobs = 20
-        warmup_params.seed = int(time.time())
-
-        warmup_outputs = self.llm.generate([prompt], warmup_params)
+        warmup_params_list = []
+        base_seed = time.time_ns()
+        for param_id in range(warmup_traces):
+            warmup_params = copy.deepcopy(sampling_params) 
+            warmup_params.logprobs = 20
+            warmup_params.seed = base_seed + param_id
+            warmup_params_list.append(warmup_params)
+        warmup_outputs = self.llm.generate([prompt for _ in range(warmup_traces)], warmup_params_list)
         output.warmup_gen_time = time.time() - warmup_gen_start
         
         # Process warmup results
@@ -212,19 +214,25 @@ class DeepThinkLLM:
         print(f"Warmup completed: conf_bar={output.conf_bar:.3f}")
         
         # Final phase
-        print(f"Starting final phase...")
+        print(f"Starting final phase...", sampling_params)
         final_gen_start = time.time()
-        final_params = copy.deepcopy(sampling_params)
-        final_params.seed = int(time.time())
-        final_params.n = total_budget - warmup_traces
-        final_params.extra_args = {
-            "conf_threshold": output.conf_bar,
-            "eos_token_id": self.tokenizer.eos_token_id,
-            "conf_group_size": window_size,
-            "conf_topk": 20,
-        }
-        
-        final_outputs = self.llm.generate([prompt], final_params)
+        # final_params = copy.deepcopy(sampling_params)
+        # final_params.seed = int(time.time())
+        # final_params.n = total_budget - warmup_traces
+
+        final_params_list = []
+        for param_id in range(total_budget - warmup_traces):
+            final_params = copy.deepcopy(sampling_params) 
+            final_params.logprobs = 20
+            final_params.seed = base_seed + param_id + warmup_traces
+            final_params.extra_args = {
+                "conf_threshold": output.conf_bar,
+                "eos_token_id": self.tokenizer.eos_token_id,
+                "conf_group_size": window_size,
+                "conf_topk": 20,
+            }
+            final_params_list.append(final_params)
+        final_outputs = self.llm.generate([prompt for _ in range(total_budget - warmup_traces)], final_params_list)
         output.final_gen_time = time.time() - final_gen_start
         
         # Process final results
@@ -264,14 +272,18 @@ class DeepThinkLLM:
     ) -> DeepThinkOutput:
         """Offline deep thinking - generate all traces at once"""
         
+        sampling_params_list = []
+        base_seed = time.time_ns()
+        for param_id in range(budget):
+            sampling_params_x = copy.deepcopy(sampling_params) 
+            sampling_params_x.logprobs = 20
+            sampling_params_x.seed = base_seed + param_id
+            sampling_params_list.append(sampling_params_x)
 
-        sampling_params.n = budget
-        sampling_params.seed = int(time.time())
-        
         # Generate all traces at once
-        print(f"Generating {budget} traces...")
+        print(f"Generating {budget} traces...", sampling_params)
         generation_start = time.time()
-        vllm_outputs = self.llm.generate([prompt], sampling_params)
+        vllm_outputs = self.llm.generate([prompt for _ in range(budget)], sampling_params_list)
         output.generation_time = time.time() - generation_start
         
         # Process results

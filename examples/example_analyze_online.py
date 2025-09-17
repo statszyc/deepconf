@@ -239,6 +239,8 @@ def analyze_voting_methods(results: List[Dict]) -> Dict:
                     method_stats[method]['total'] += 1
                     if eval_data.get('is_correct'):
                         method_stats[method]['correct'] += 1
+                    else:
+                        print('Incorrect answer found:', eval_data.get('answer'))
                     method_stats[method]['answers'].append({
                         'answer': eval_data['answer'],
                         'confidence': eval_data.get('confidence'),

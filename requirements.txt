@@ -2,4 +2,4 @@
 git+https://github.com/hao-ai-lab/Dynasor.git
 
 # Install latest version of vLLM
-vllm
+vllm==0.10.2

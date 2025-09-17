@@ -166,9 +166,6 @@ def analyze_timing_details(results: List[Dict]) -> Dict:
         
         # Basic timing components
         for component in timing_components:
-            if component == 'generation_time':
-                timing_components['generation_time'].append(timing_stats.get('warmup_gen_time', 0) + timing_stats.get('final_gen_time', 0))
-                continue
             timing_components[component].append(timing_stats.get(component, 0))
         
         
@@ -299,7 +296,7 @@ def print_timing_breakdown(timing_stats: Dict):
     # Group timing metrics by category
     categories = {
         # 'Initialization Times': ['tokenizer_init_time', 'llm_init_time', 'init_total_time'],
-        'Generation Times': ['warmup_gen_time', 'final_gen_time', 'generation_time'],
+        'Generation Times': [ 'generation_time'],
         # 'Processing Times': ['warmup_process_time', 'final_process_time', 'processing_time'],
         # 'Phase Totals': ['warmup_total_time', 'final_total_time', 'inference_time', 'total_time'],
         # 'Throughput (tokens/sec)': ['throughput_tokens_per_sec', 'warmup_throughput', 'final_throughput']
@@ -353,6 +350,8 @@ def print_statistics(token_stats: Dict, method_accuracy: Dict, conf_accuracy: Di
         print(f"\n💰 Token Usage Statistics")
         print("-"*40)
         for token_type, stats in token_stats.items():
+            if 'total' not in token_type:
+                continue
             print(f"\n{token_type.replace('_', ' ').title()}:")
             print(f"  Mean: {stats['mean']:,.0f} ± {stats['std']:,.0f}")
             print(f"  Median: {stats['median']:,.0f}")
@@ -368,7 +367,7 @@ def print_statistics(token_stats: Dict, method_accuracy: Dict, conf_accuracy: Di
     if method_accuracy:
         print(f"\n🗳️ Voting Methods Accuracy")
         print("-"*40)
-        print(f"{'Method':<30} {'Accuracy':<12} {'Correct/Total':<15} {'Avg Conf':<10} {'Num Votes':<10}")
+        print(f"{'Method':<30} {'Accuracy':<12} {'Correct/Total':<15} {'Avg Conf':<10}")
         print("-"*80)
 
         
@@ -380,8 +379,7 @@ def print_statistics(token_stats: Dict, method_accuracy: Dict, conf_accuracy: Di
             acc_str = f"{stats['accuracy']:.1%}"
             ratio_str = f"{stats['correct']}/{stats['total']}"
             conf_str = f"{stats['avg_confidence']:.3f}" if stats['avg_confidence'] else "N/A"
-            num_votes = f"{stats['num_votes']}"
-            print(f"{method:<30} {acc_str:<12} {ratio_str:<15} {conf_str:<10} {num_votes}")
+            print(f"{method:<30} {acc_str:<12} {ratio_str:<15} {conf_str:<10}")
     
     # Confidence-based methods accuracy
     if conf_accuracy:
