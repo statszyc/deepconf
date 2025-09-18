@@ -1,16 +1,35 @@
 
 <div align="center">
+    <img src="images/deepconf.png" width="300px" alt="Deep Think with Confidence Logo"/>
     <h1>Deep Think with Confidence</h1>
+    <em>Efficient Parallel Thinking Framework for Enhanced Reasoning</em>
 </div>
 
 <div align="center" style="line-height: 1; margin-bottom: 12px;">
+    <br/>
     | <a href="https://jiaweizzhao.github.io/deepconf/">📝 Website</a> 
     | <a href="https://arxiv.org/abs/2508.15260">📄 Paper</a> 
-    | <a href="https://x.com/jiawzhao/status/1958982524333678877">🐦 Twitter/X</a> 
+    | <a href="https://x.com/jiawzhao/status/1958982524333678877">🐦 Twitter/X</a>
+    | <a href="#quick-start">🚀 Quick Start</a> 
     |
+    <br/>
+    <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python Version"/>
+    <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/>
+    <br/>
+    ______________________________________________________________________
+    <br/>
+    <img src="images/deepconf.gif" width="620px" alt="Deep Think with Confidence animation"/>
 </div>
 
-A powerful framework for enhanced LLM reasoning with confidence-based methods and multiple voting strategies. Supports both online (confidence-based early stopping) and offline (batch generation) modes.
+  <!-- [![PyPI](https://img.shields.io/pypi/v/deepconf.svg)](https://pypi.org/project/deepconf/) -->
+
+DeepConf is an efficient parallel thinking framework built upon popular LLM serving backends such as `vLLM`. It supports various types of reasoning tasks, including math, science, and coding. The package includes standard parallel thinking pipeline with different voting and aggregation strategies, as well as efficient techniques such as confidence-based early stopping.
+
+
+<div align="center">
+    <img src="images/framework.png" alt="Framework Overview"/>
+</div>
+
 
 ## Quick Start
 
