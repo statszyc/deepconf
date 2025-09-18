@@ -16,8 +16,6 @@
     <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python Version"/>
     <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/>
     <br/>
-    ______________________________________________________________________
-    <br/>
     <img src="images/deepconf.gif" width="620px" alt="Deep Think with Confidence animation"/>
 </div>
 
