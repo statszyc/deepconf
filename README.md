@@ -17,11 +17,12 @@
     <br/>
     <img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python Version"/>
     <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/>
+    <img src="https://img.shields.io/pypi/v/deepconf.svg" alt="PyPI"/>
     <br/>
     <img src="images/deepconf.gif" width="620px" alt="Deep Think with Confidence animation"/>
 </div>
 
-  <!-- [![PyPI](https://img.shields.io/pypi/v/deepconf.svg)](https://pypi.org/project/deepconf/) -->
+  
 
 DeepConf is an efficient parallel thinking framework built upon popular LLM serving backends such as `vLLM`. It supports various types of reasoning tasks, including math, science, and coding. The package includes standard parallel thinking pipeline with different voting and aggregation strategies, as well as efficient techniques such as confidence-based early stopping.
 
