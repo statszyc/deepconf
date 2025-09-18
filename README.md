@@ -37,8 +37,8 @@ DeepConf is an efficient parallel thinking framework built upon popular LLM serv
 ### Installation
 
 ```bash
+pip install deepconf
 uv pip install -r requirements.txt
-pip install -e ./
 ```
 
 ### Basic Usage
