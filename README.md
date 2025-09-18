@@ -1,6 +1,6 @@
 
 <div align="center">
-    <img src="images/deepconf.png" width="300px" alt="Deep Think with Confidence Logo"/>
+    <img src="images/deepconf.png" width="350px" alt="Deep Think with Confidence Logo" style="margin-left: -50px;"/>
     <h1>Deep Think with Confidence</h1>
     <em>Efficient Parallel Thinking Framework for Enhanced Reasoning</em>
 </div>
