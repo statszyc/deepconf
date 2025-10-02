@@ -1,0 +1,16 @@
+# 忽略所有.pkl文件
+*.pkl
+*.pt
+*.pth
+
+# 也可以加上其他常见的大文件或文件夹
+*.jsonl
+
+# 忽略Python缓存文件
+__pycache__/
+
+# 忽略VS Code的配置文件
+.vscode/
+
+# 忽略log
+*.log
