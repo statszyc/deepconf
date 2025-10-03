@@ -371,7 +371,6 @@ def train(args):
                 if not out or not getattr(out,"logprobs",None): 
                     continue
                 # 取logprobs → conf tracker
-                from deepconf.utils import compute_confidence
                 token_confs = compute_confidence(out.logprobs)
                 if not token_confs:
                     continue

@@ -24,9 +24,9 @@ date
 python examples/online_RL/train_rl_controller.py \
     --model deepseek-ai/DeepSeek-R1-0528-Qwen3-8B \
     --dataset aime_2025.jsonl \
-    --epochs 10 \
+    --epochs 5 \
     --lr 1e-4 \
-    --max_tokens 64000 \
+    --max_tokens 32000 \
     --decision_stride 128 \
     --K 5 \
     --temperature 0.6 \
@@ -37,11 +37,11 @@ python examples/online_RL/train_rl_controller.py \
     --confidence_mid 0.45 \
     --confidence_k 8.0 \
     --confidence_s 4.0 \
-    --trend_scale 2.0 \
+    --trend_scale 4.0 \
     --token_cost_weight 0.005 \
-    --correctness_weight 15.0 \
-    --wrong_penalty 12.0 \
+    --correctness_weight 30.0 \
+    --wrong_penalty 6.0 \
     --confidence_weight 1.0 \
-    --save_every 200 \
+    --save_every 100 \
     --print_every 5
 date
