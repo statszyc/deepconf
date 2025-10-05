@@ -32,18 +32,17 @@ python examples/online_RL/train_rl_controller.py \
     --temperature 0.6 \
     --top_p 0.95 \
     --window_size 2048 \
-    --alpha_token 5.0 \
-    --confidence_scale 6.0 \
-    --confidence_mid 0.4533 \
+    --alpha_token 4.0 \
+    --confidence_scale 4.0 \
+    --confidence_mid 0.45 \
     --confidence_k 8.0 \
     --confidence_s 4.0 \
-    --trend_scale 4.0 \
+    --trend_scale 2.0 \
     --token_cost_weight 0.002 \
-    --correctness_weight 25.0 \
+    --correctness_weight 30.0 \
     --wrong_penalty 6.0 \
-    --early_stop_penalty 6.0 \
+    --early_stop_penalty 10.0 \
     --confidence_weight 1.0 \
     --save_every 100 \
-    --print_every 5 \
-    --save_path rl_policy_C2.pt
+    --print_every 5
 date
