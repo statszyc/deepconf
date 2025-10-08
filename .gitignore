@@ -5,6 +5,9 @@
 
 # 也可以加上其他常见的大文件或文件夹
 *.jsonl
+*.png
+*.jpg
+*.jpeg
 
 # 忽略Python缓存文件
 __pycache__/
