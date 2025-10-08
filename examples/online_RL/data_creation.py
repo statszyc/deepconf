@@ -1,14 +1,11 @@
 """
 Generate trace-confidence dataset for RL training (per-question mode).
 
-This script runs DeepThinkLLM in an offline batch mode to generate multiple
-reasoning traces for a single question. It manually calculates the
-group-level (sliding window) confidence scores for each trace, evaluates
-the correctness of the extracted answer, and saves the structured data
-to a JSONL file.
+This script runs the core vLLM engine directly to generate multiple traces,
+ensuring that all confidence calculations start from the raw, unprocessed
+log probabilities, guaranteeing full floating-point precision.
 
-The script is designed to be compatible with SLURM array jobs by accepting a
-question ID (--qid) as a command-line argument.
+After generation, it prints a summary of the top 5 most frequent answers.
 
 Usage example (per question on SLURM):
   srun python generate_trace_dataset.py --dataset aime25.jsonl --qid $SLURM_ARRAY_TASK_ID --budget 256 --output_dir ./trace_data
@@ -16,195 +13,215 @@ Usage example (per question on SLURM):
 
 import os
 import json
-import pickle
 import argparse
-from datetime import datetime
+import numpy as np
+import time
+import copy
 from vllm import SamplingParams
-
-# -------------------------------
-# Import necessary components from the deepconf project
-# -------------------------------
 from deepconf import DeepThinkLLM
-from deepconf.utils import compute_least_grouped # 关键：导入group confidence计算函数
 from dynasor.core.evaluator import math_equal
+from typing import List, Dict, Any
+from collections import Counter
 
 # -------------------------------
 #  Helper functions
 # -------------------------------
 
+def calculate_token_confs_from_logprobs(logprobs: List[Dict[int, Any]]) -> List[float]:
+    """
+    Calculates token confidences from raw vLLM logprobs with full precision.
+    """
+    token_confs = []
+    if not logprobs:
+        return token_confs
+        
+    for step_logprobs in logprobs:
+        if not step_logprobs:
+            continue
+        chosen_token_logprob = -float('inf')
+        for logprob_obj in step_logprobs.values():
+            chosen_token_logprob = max(chosen_token_logprob, logprob_obj.logprob)
+        
+        confidence = np.exp(chosen_token_logprob)
+        token_confs.append(confidence)
+        
+    return token_confs
+
+
+def compute_group_confidence_full_precision(confs: List[float], group_size: int) -> List[float]:
+    """Computes sliding window mean confidence with full floating-point precision."""
+    if not confs: return [0.0]
+    if len(confs) < group_size: return [sum(confs) / len(confs)]
+    
+    sliding_means = []
+    current_sum = sum(confs[:group_size])
+    sliding_means.append(current_sum / group_size)
+    
+    for i in range(len(confs) - group_size):
+        current_sum = current_sum - confs[i] + confs[i + group_size]
+        sliding_means.append(current_sum / group_size)
+        
+    return sliding_means
+
 def quick_parse(text: str) -> str:
-    """Simplify LaTeX-style answers by removing \\text{...} wrappers."""
-    if not isinstance(text, str):
-        return ""
-    if '\\text{' in text and '}' in text:
-        while '\\text{' in text:
-            start = text.find('\\text{')
-            end = text.find('}', start)
-            if start == -1 or end == -1:
-                break
-            text = text[:start] + text[start + 6:end] + text[end + 1:]
+    """Simplify LaTeX-style answers."""
+    if not isinstance(text, str): return ""
+    # Corrected the logic for finding the closing brace
+    while '\\text{' in text:
+        start = text.find('\\text{')
+        end = text.find('}', start)
+        if start == -1 or end == -1: break
+        text = text[:start] + text[start + 6:end] + text[end + 1:]
     return text
 
+def extract_answer(text: str) -> str:
+    """Extracts the answer from the full text, compatible with deepconf."""
+    if not isinstance(text, str): return None
+    if "boxed" in text:
+        ans = text.split("boxed")[-1]
+        if len(ans) == 0: return ""
+        if ans[0] == "{":
+            stack = 1
+            a = ""
+            for c in ans[1:]:
+                if c == "{": stack += 1; a += c
+                elif c == "}":
+                    stack -= 1
+                    if stack == 0: break
+                    a += c
+                else: a += c
+            return a.strip()
+        else:
+            return ans.split("$")[0].strip()
+    return None
+
+
 def equal_func(answer: str, ground_truth: str) -> bool:
-    """Check if the model's answer is equivalent to the ground truth."""
-    if not answer or not ground_truth:
-        return False
-        
-    answer = quick_parse(answer)
-    
-    if (
-        len(answer) == 1 and answer.isalpha()
-        and len(ground_truth) == 1 and ground_truth.isalpha()
-    ):
+    """Check correctness."""
+    if answer is None or ground_truth is None: return False
+    answer = quick_parse(str(answer))
+    ground_truth = str(ground_truth)
+    if (len(answer) == 1 and answer.isalpha() and 
+        len(ground_truth) == 1 and ground_truth.isalpha()):
         return answer.lower() == ground_truth.lower()
     else:
-        try:
-            # Use math_equal for robust mathematical expression comparison
-            return math_equal(answer, ground_truth)
-        except Exception:
-            # Fallback to string comparison for other cases
-            return str(answer).strip() == str(ground_truth).strip()
+        try: return math_equal(answer, ground_truth)
+        except Exception: return answer.strip() == ground_truth.strip()
 
-def prepare_prompt(question: str, tokenizer, model_type: str = "deepseek", reasoning_effort: str = "high"):
-    """Prepare the prompt using the appropriate chat template for the model."""
+def prepare_prompt(question: str, tokenizer, model_type: str = "deepseek", **kwargs):
+    """Prepare prompt."""
     if model_type == "deepseek":
-        messages = [
-            {"role": "system", "content": "该助手为DeepSeek-R1，由深度求索公司创造。\n今天是2025年5月28日，星期一。\n"},
-            {"role": "user", "content": question}
-        ]
-        # Deepseek's template does not use 'reasoning_effort'
-        return tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-    else: # Default to GPT-like models
+        messages = [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": question}]
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    else:
         messages = [{"role": "user", "content": question}]
-        return tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            reasoning_effort=reasoning_effort
-        )
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **kwargs)
 
 # -------------------------------
 #  Main logic
 # -------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a trace dataset for RL training")
-    parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", help="Model name or path.")
-    parser.add_argument("--tensor_parallel_size", type=int, default=1, help="Tensor parallel size for vLLM.")
-    parser.add_argument("--dataset", type=str, required=True, help="Path to the input JSONL dataset.")
-    parser.add_argument("--qid", type=int, required=True, help="Question ID (0-based index) to process.")
-    parser.add_argument("--budget", type=int, default=256, help="Number of traces to generate per question.")
-    parser.add_argument("--window_size", type=int, default=2048, help="Sliding window size for group confidence calculation.")
-    parser.add_argument("--max_tokens", type=int, default=64000, help="Maximum new tokens per trace.")
-    parser.add_argument("--model_type", type=str, default="deepseek", choices=["gpt", "deepseek"], help="Type of model for prompt formatting.")
-    parser.add_argument("--reasoning_effort", type=str, default="high", help="Reasoning effort parameter for GPT models.")
-    parser.add_argument("--temperature", type=float, default=0.6, help="Sampling temperature.")
-    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p sampling parameter.")
-    parser.add_argument("--top_k", type=int, default=0, help="Top-k sampling parameter (0 means disabled).")
-    parser.add_argument("--output_dir", type=str, default="trace_data", help="Directory to save the output files.")
+    parser = argparse.ArgumentParser(description="Generate trace dataset with full precision confidence.")
+    parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
+    parser.add_argument("--tensor_parallel_size", type=int, default=1)
+    parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--qid", type=int, required=True)
+    parser.add_argument("--budget", type=int, default=256)
+    parser.add_argument("--window_size", type=int, default=2048)
+    parser.add_argument("--max_tokens", type=int, default=64000)
+    parser.add_argument("--model_type", type=str, default="deepseek", choices=["gpt", "deepseek"])
+    parser.add_argument("--reasoning_effort", type=str, default="high")
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--top_p", type=float, default=0.95)
+    parser.add_argument("--top_k", type=int, default=0)
+    parser.add_argument("--output_dir", type=str, default="trace_data")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # --- Load Data ---
     print(f"[INFO] Loading dataset from {args.dataset}")
     try:
-        with open(args.dataset, "r", encoding="utf-8") as f:
-            data = [json.loads(line) for line in f]
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"[ERROR] Could not read dataset file: {e}")
-        return
+        with open(args.dataset, "r", encoding="utf-8") as f: data = [json.loads(line) for line in f]
+    except Exception as e:
+        print(f"[ERROR] Could not read dataset file: {e}"); return
 
-    if args.qid < 0 or args.qid >= len(data):
-        print(f"[ERROR] Invalid qid={args.qid}. Dataset has {len(data)} entries (0 to {len(data)-1}).")
-        return
+    if not (0 <= args.qid < len(data)):
+        print(f"[ERROR] Invalid qid={args.qid}. Dataset has {len(data)} entries."); return
 
     question_entry = data[args.qid]
-    question = question_entry["question"]
-    ground_truth = str(question_entry.get("answer", "")).strip()
+    question, ground_truth = question_entry["question"], str(question_entry.get("answer", "")).strip()
     dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
     question_id_str = f"{dataset_name}_{args.qid:03d}"
 
     print(f"[INFO] Processing QID={args.qid} ({question_id_str}): {question[:80]}...")
     
-    # --- Initialize Model ---
-    deep_llm = DeepThinkLLM(
-        model=args.model,
-        tensor_parallel_size=args.tensor_parallel_size,
-        enable_prefix_caching=True
-    )
-
-    # --- Prepare Prompt and Sampling (修正之处) ---
-    prompt = prepare_prompt(question, deep_llm.tokenizer, args.model_type, args.reasoning_effort)
+    deep_llm = DeepThinkLLM(model=args.model, tensor_parallel_size=args.tensor_parallel_size)
     
-    # 在 SamplingParams 中移除 n 参数
-    # n 的值将由 deepthink 的 budget 参数唯一控制
-    sampling_params = SamplingParams(
-        # n=args.budget,  <-- 移除或注释掉这一行
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.max_tokens,
-        logprobs=20, 
-    )
-
-    # --- Generate Traces in Offline Mode ---
-    print(f"[INFO] Generating {args.budget} traces...")
+    prompt = prepare_prompt(question, deep_llm.tokenizer, args.model_type, reasoning_effort=args.reasoning_effort)
     
-    # budget 参数是控制生成总数的唯一来源
-    result = deep_llm.deepthink(
-        prompt=prompt,
-        mode="offline",
-        budget=args.budget, 
-        window_size=args.window_size,
-        sampling_params=sampling_params,
-        compute_multiple_voting=False
+    base_sampling_params = SamplingParams(
+        temperature=args.temperature, top_p=args.top_p, top_k=args.top_k,
+        max_tokens=args.max_tokens, logprobs=20,
     )
+    
+    sampling_params_list = []
+    base_seed = int(time.time())
+    for i in range(args.budget):
+        params = copy.deepcopy(base_sampling_params)
+        params.seed = base_seed + i
+        sampling_params_list.append(params)
 
-    # --- Process and Extract Trace Data ---
-    print("[INFO] Processing generated traces...")
+    print(f"[INFO] Generating {args.budget} traces directly with vLLM engine...")
+    vllm_outputs = deep_llm.llm.generate([prompt] * args.budget, sampling_params_list)
+
+    print("[INFO] Processing generated traces with full precision...")
     processed_traces = []
-    for i, trace in enumerate(result.all_traces):
-        # 1. Get the raw token-level confidences
-        token_confidences = trace.get("confs", [])
+    all_answers = []
+    
+    for i, trace_output in enumerate(vllm_outputs[0].outputs):
+        raw_logprobs = trace_output.logprobs
+        token_confidences = calculate_token_confs_from_logprobs(raw_logprobs)
+        group_confidences = compute_group_confidence_full_precision(token_confidences, args.window_size)
         
-        # 2. **Manually compute group confidences using the imported utility function**
-        group_confidences = compute_least_grouped(token_confidences, group_size=args.window_size)
-        
-        # 3. Get tokens by converting token IDs
-        token_ids = trace.get("token_ids", [])
-        tokens = deep_llm.tokenizer.convert_ids_to_tokens(token_ids)
-        
-        # 4. Get the answer and check correctness
-        answer_text = trace.get("extracted_answer", None)
+        token_ids = trace_output.token_ids
+        # 使用 extract_answer 提取答案，以保持与 deepconf 库一致性
+        answer_text = extract_answer(trace_output.text)
+        all_answers.append(str(answer_text)) # For statistics
         is_correct = equal_func(answer_text, ground_truth)
 
         processed_traces.append({
             "trace_id": i,
-            "tokens": tokens,
+            "tokens": deep_llm.tokenizer.convert_ids_to_tokens(token_ids),
             "group_confidence": group_confidences,
+            # "trace_confidence" field is now removed
             "answer": answer_text,
             "is_correct": is_correct
         })
 
-    # --- Prepare Final Output and Save ---
+    # --- 新增：在控制台输出答案分布统计 ---
+    print("\n--- Answer Distribution (Top 5) ---")
+    if all_answers:
+        total_answers = len(all_answers)
+        answer_counts = Counter(all_answers)
+        for answer, count in answer_counts.most_common(5):
+            percentage = (count / total_answers) * 100
+            print(f"  - Answer: {answer if answer is not None else 'None'}")
+            print(f"    Count: {count}/{total_answers} ({percentage:.1f}%)")
+    else:
+        print("  No answers were extracted.")
+    print("-------------------------------------\n")
+
+
     output_data = {
-        "question_id": question_id_str,
-        "question": question,
-        "ground_truth": ground_truth,
-        "num_traces": len(processed_traces),
+        "question_id": question_id_str, "question": question,
+        "ground_truth": ground_truth, "num_traces": len(processed_traces),
         "traces": processed_traces,
     }
 
-    # Save as a single JSONL file for the question, which is easier to handle
     output_path = os.path.join(args.output_dir, f"{question_id_str}.jsonl")
     try:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(output_data) + "\n")
+        with open(output_path, "w", encoding="utf-8") as f: f.write(json.dumps(output_data))
         print(f"[SUCCESS] Saved {len(processed_traces)} traces to {output_path}")
     except IOError as e:
         print(f"[ERROR] Failed to write to output file: {e}")
