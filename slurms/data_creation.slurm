@@ -5,13 +5,13 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=9:00:00
+#SBATCH --time=18:00:00
 #SBATCH --output=logs/%A_%a.log  # 修改日志文件名，为每个子作业单独记录
 
 # ---- 新增：定义作业数组 ----
 # 格式为 --array=<起始索引>-<结束索引>%<最大并行数>
-# 这里表示创建从 0 到 14 的作业，但最多只允许 3 个同时运行
-#SBATCH --array=0-14%3
+# 这里表示创建从 0 到 14 的作业，但最多只允许 2 个同时运行
+#SBATCH --array=0-14%2
 
 # ---- 1. 加载必要模块 ----
 module load CUDA/12.8.0
