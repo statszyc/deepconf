@@ -179,7 +179,13 @@ def main():
     processed_traces = []
     all_answers = []
     
-    for i, trace_output in enumerate(vllm_outputs[0].outputs):
+    for i, request_output in enumerate(vllm_outputs):
+        # 检查这个 RequestOutput 是否真的包含结果
+        if not request_output.outputs:
+            continue
+        
+        # 从 RequestOutput 中提取出那唯一的一条 trace
+        trace_output = request_output.outputs[0]
         raw_logprobs = trace_output.logprobs
         token_confidences = calculate_token_confs_from_logprobs(raw_logprobs)
         group_confidences = compute_group_confidence_full_precision(token_confidences, args.window_size)
