@@ -8,7 +8,7 @@ log probabilities, guaranteeing full floating-point precision.
 After generation, it prints a summary of the top 5 most frequent answers.
 
 Usage example (per question on SLURM):
-  srun python generate_trace_dataset.py --dataset aime25.jsonl --qid $SLURM_ARRAY_TASK_ID --budget 256 --output_dir ./trace_data
+  srun python generate_trace_dataset.py --dataset aime25.jsonl --qid $SLURM_ARRAY_TASK_ID --budget 256 --output_file ./trace_data/aime25_${SLURM_ARRAY_TASK_ID}.jsonl
 """
 
 import os
@@ -135,11 +135,9 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--top_k", type=int, default=0)
-    parser.add_argument("--output_dir", type=str, default="trace_data")
+    parser.add_argument("--output_file", type=str, required=True)
     args = parser.parse_args()
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    
     print(f"[INFO] Loading dataset from {args.dataset}")
     try:
         with open(args.dataset, "r", encoding="utf-8") as f: data = [json.loads(line) for line in f]
@@ -180,30 +178,35 @@ def main():
     all_answers = []
     
     for i, request_output in enumerate(vllm_outputs):
-        # 检查这个 RequestOutput 是否真的包含结果
-        if not request_output.outputs:
-            continue
-        
-        # 从 RequestOutput 中提取出那唯一的一条 trace
-        trace_output = request_output.outputs[0]
-        raw_logprobs = trace_output.logprobs
-        token_confidences = calculate_token_confs_from_logprobs(raw_logprobs)
-        group_confidences = compute_group_confidence_full_precision(token_confidences, args.window_size)
-        
-        token_ids = trace_output.token_ids
-        # 使用 extract_answer 提取答案，以保持与 deepconf 库一致性
-        answer_text = extract_answer(trace_output.text)
-        all_answers.append(str(answer_text)) # For statistics
-        is_correct = equal_func(answer_text, ground_truth)
+        try:
+            # 检查这个 RequestOutput 是否真的包含结果
+            if not request_output.outputs:
+                print(f"[WARNING] Empty output for trace {i}, skipping...")
+                continue
+            
+            # 从 RequestOutput 中提取出那唯一的一条 trace
+            trace_output = request_output.outputs[0]
+            raw_logprobs = trace_output.logprobs
+            token_confidences = calculate_token_confs_from_logprobs(raw_logprobs)
+            group_confidences = compute_group_confidence_full_precision(token_confidences, args.window_size)
+            
+            token_ids = trace_output.token_ids
+            # 使用 extract_answer 提取答案，以保持与 deepconf 库一致性
+            answer_text = extract_answer(trace_output.text)
+            all_answers.append(str(answer_text)) # For statistics
+            is_correct = equal_func(answer_text, ground_truth)
 
-        processed_traces.append({
-            "trace_id": i,
-            "tokens": deep_llm.tokenizer.convert_ids_to_tokens(token_ids),
-            "group_confidence": group_confidences,
-            # "trace_confidence" field is now removed
-            "answer": answer_text,
-            "is_correct": is_correct
-        })
+            processed_traces.append({
+                "trace_id": len(processed_traces),  # 使用连续的ID
+                "tokens": deep_llm.tokenizer.convert_ids_to_tokens(token_ids),
+                "group_confidence": group_confidences,
+                # "trace_confidence" field is now removed
+                "answer": answer_text,
+                "is_correct": is_correct
+            })
+        except Exception as e:
+            print(f"[ERROR] Failed to process trace {i}: {e}")
+            continue
 
     # --- 新增：在控制台输出答案分布统计 ---
     print("\n--- Answer Distribution (Top 5) ---")
@@ -225,7 +228,7 @@ def main():
         "traces": processed_traces,
     }
 
-    output_path = os.path.join(args.output_dir, f"{question_id_str}.jsonl")
+    output_path = args.output_file
     try:
         with open(output_path, "w", encoding="utf-8") as f: f.write(json.dumps(output_data))
         print(f"[SUCCESS] Saved {len(processed_traces)} traces to {output_path}")

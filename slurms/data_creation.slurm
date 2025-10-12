@@ -1,17 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=data_creation_array  # 修改作业名称，更具描述性
+#SBATCH --job-name=data_creation_array
 #SBATCH --partition=gpu_p
 #SBATCH --gres=gpu:A100:1
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
-#SBATCH --output=logs/%A_%a.log  # 修改日志文件名，为每个子作业单独记录
-
-# ---- 新增：定义作业数组 ----
-# 格式为 --array=<起始索引>-<结束索引>%<最大并行数>
-# 这里表示创建从 8 到 23 的作业
-#SBATCH --array=8-23%1
+#SBATCH --output=logs/%A_%a.log
+#SBATCH --array=8-23
 
 # ---- 1. 加载必要模块 ----
 module load CUDA/12.8.0
@@ -24,12 +20,60 @@ cd ~/Projects/Method/deepconf
 
 nvidia-smi
 echo "Starting SLURM array job ${SLURM_ARRAY_JOB_ID} with task ID ${SLURM_ARRAY_TASK_ID}"
-
-# ---- 4. 运行程序，使用 SLURM 提供的环境变量作为 qid ----
-date
-python examples/online_RL/data_creation.py \
-  --dataset aime_2025.jsonl \
-  --qid ${SLURM_ARRAY_TASK_ID}  # 关键修改：使用环境变量替换硬编码的 0
 date
 
+# ======================
+# 🔹 Trace 分批生成逻辑
+# ======================
+DATASET="aime_2025.jsonl"
+QID=${SLURM_ARRAY_TASK_ID}
+OUTDIR="trace_data"
+mkdir -p ${OUTDIR}
+
+TOTAL_TRACE=256
+BATCH_SIZE=64  # 每批生成64条 trace
+NUM_BATCHES=$((TOTAL_TRACE / BATCH_SIZE))
+
+for ((i=0; i<NUM_BATCHES; i++)); do
+    OUTFILE="${OUTDIR}/aime_2025_${QID}_part${i}.jsonl"
+
+    # 若文件已存在则跳过（支持断点续跑）
+    if [ -f "${OUTFILE}" ]; then
+        echo "[INFO] Skipping existing ${OUTFILE}"
+        continue
+    fi
+
+    echo "[$(date)] Generating batch $i (QID=${QID})"
+
+    # 添加错误处理
+    if python examples/online_RL/data_creation.py \
+        --dataset ${DATASET} \
+        --qid ${QID} \
+        --budget ${BATCH_SIZE} \
+        --output_file ${OUTFILE}; then
+        echo "[$(date)] Successfully finished batch $i"
+    else
+        echo "[ERROR] Failed to generate batch $i for QID=${QID}"
+        exit 1
+    fi
+done
+
+# ---- 5. 合并分批结果 ----
+FINAL_FILE="${OUTDIR}/aime_2025_${QID}_full.jsonl"
+echo "[INFO] Merging all parts for QID=${QID}"
+
+# 更安全的合并方式，只合并当前QID的文件
+if ls ${OUTDIR}/aime_2025_${QID}_part*.jsonl 1> /dev/null 2>&1; then
+    cat ${OUTDIR}/aime_2025_${QID}_part*.jsonl > ${FINAL_FILE}
+    echo "[SUCCESS] Saved full trace set to ${FINAL_FILE}"
+    
+    # 清理临时文件
+    echo "[INFO] Cleaning up temporary part files..."
+    rm ${OUTDIR}/aime_2025_${QID}_part*.jsonl
+    echo "[INFO] Cleanup completed"
+else
+    echo "[WARNING] No part files found for QID=${QID}"
+fi
+
+date
 echo "Finished SLURM task ID ${SLURM_ARRAY_TASK_ID}"
