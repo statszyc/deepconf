@@ -5,9 +5,9 @@
 #SBATCH --ntasks=1
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=18:00:00
+#SBATCH --time=19:00:00
 #SBATCH --output=logs/%A_%a.log
-#SBATCH --array=8-23
+#SBATCH --array=10
 
 # ---- 1. 加载必要模块 ----
 module load CUDA/12.8.0
@@ -27,7 +27,7 @@ date
 # ======================
 DATASET="aime_2025.jsonl"
 QID=${SLURM_ARRAY_TASK_ID}
-OUTDIR="trace_data"
+OUTDIR="trace_data_3"
 mkdir -p ${OUTDIR}
 
 TOTAL_TRACE=256
@@ -64,7 +64,10 @@ echo "[INFO] Merging all parts for QID=${QID}"
 
 # 更安全的合并方式，只合并当前QID的文件
 if ls ${OUTDIR}/aime_2025_${QID}_part*.jsonl 1> /dev/null 2>&1; then
-    cat ${OUTDIR}/aime_2025_${QID}_part*.jsonl > ${FINAL_FILE}
+    for f in ${OUTDIR}/aime_2025_${QID}_part*.jsonl; do
+        cat "$f" >> ${FINAL_FILE}
+        echo >> ${FINAL_FILE}
+    done
     echo "[SUCCESS] Saved full trace set to ${FINAL_FILE}"
     
     # 清理临时文件

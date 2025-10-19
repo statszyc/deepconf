@@ -222,16 +222,36 @@ def main():
     print("-------------------------------------\n")
 
 
-    output_data = {
-        "question_id": question_id_str, "question": question,
-        "ground_truth": ground_truth, "num_traces": len(processed_traces),
-        "traces": processed_traces,
-    }
+    # output_data = {
+    #     "question_id": question_id_str, "question": question,
+    #     "ground_truth": ground_truth, "num_traces": len(processed_traces),
+    #     "traces": processed_traces,
+    # }
 
+    # output_path = args.output_file
+    # try:
+    #     with open(output_path, "w", encoding="utf-8") as f: f.write(json.dumps(output_data))
+    #     print(f"[SUCCESS] Saved {len(processed_traces)} traces to {output_path}")
+    # except IOError as e:
+    #     print(f"[ERROR] Failed to write to output file: {e}")
+
+    # --- Save in standard JSONL format ---
     output_path = args.output_file
     try:
-        with open(output_path, "w", encoding="utf-8") as f: f.write(json.dumps(output_data))
-        print(f"[SUCCESS] Saved {len(processed_traces)} traces to {output_path}")
+        with open(output_path, "w", encoding="utf-8") as f:
+            for trace in processed_traces:
+                record = {
+                    "question_id": question_id_str,
+                    "question": question,
+                    "ground_truth": ground_truth,
+                    "trace_id": trace["trace_id"],
+                    "tokens": trace["tokens"],
+                    "group_confidence": trace["group_confidence"],
+                    "answer": trace["answer"],
+                    "is_correct": trace["is_correct"]
+                }
+                f.write(json.dumps(record) + "\n")
+        print(f"[SUCCESS] Wrote {len(processed_traces)} traces (JSONL) to {output_path}")
     except IOError as e:
         print(f"[ERROR] Failed to write to output file: {e}")
 
