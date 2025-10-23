@@ -1,3 +1,4 @@
+import argparse
 from deepconf import DeepThinkLLM
 from vllm import SamplingParams
 
@@ -16,9 +17,6 @@ random.seed(13)
 
 ######### LOAD DATA #########
 # --- 1. 配置 ---
-# 👇 只需修改这里，指定要分析的问题 QID
-TARGET_QID = 29
-
 # --- 2. 将工作目录设置为项目根目录 (如果需要) ---
 os.chdir(os.path.expanduser('~/Projects/Method/deepconf'))
 
@@ -117,171 +115,184 @@ Finally, output your decision in the exact format:
 """
     return follow_up_question.strip()
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run follow-up self-check experiment")
+
+    parser.add_argument("--model", type=str, default="deepseek-r1-qwen-8b",
+                        help="LLM model name to use.")
+    parser.add_argument("--question_id", type=int, required=True,
+                        help="AIME problem ID (for logging).")
+
+    return parser.parse_args()
 # --- 4. Load the Target File ---
-file_path = f'trace_data/aime_2025_{TARGET_QID}_full.jsonl'
-data = load_concatenated_json(file_path)
+def main():
+    args = parse_args()
+    file_path = f'trace_data/aime_2025_{args.question_id}_full.jsonl'
+    data = load_concatenated_json(file_path)
 
-if data:
-    traces = data.get('traces', [])
-    question = data.get('question', [])
-    print(f"\nSuccessfully loaded and merged data for QID {TARGET_QID}.")
-    print(f"Total traces found: {len(traces)}")
-else:
-    print(f"\nERROR: Could not load data from {file_path}")
-    traces = []
-
-######### SCREENING #########
-
-# --- Early Stopping Simulation Configuration ---
-NUM_CALIBRATION_TRACES = 16
-USE_LOW_THRESHOLD = False  # True: 10% percentile (lenient), False: 90% percentile (strict)
-NUM_TRACES_TO_PLOT = 250
-random.seed(13)
-
-# --- Calculate Threshold ---
-s = None
-if len(traces) >= NUM_CALIBRATION_TRACES:
-    calibration_traces = random.sample(traces, NUM_CALIBRATION_TRACES)
-    lowest_confs = [min(t['group_confidence']) for t in calibration_traces if t['group_confidence']]
-    if lowest_confs:
-        s_high = np.percentile(lowest_confs, 10)
-        s_low = np.percentile(lowest_confs, 90)
-        s = s_high if USE_LOW_THRESHOLD else s_low
-        print(f"--- Early Stopping Simulation ---")
-        print(f"Threshold computed from {len(lowest_confs)} calibration samples.")
-        print(f"  - High Threshold (10th percentile): {s_high:.4f}")
-        print(f"  - Low Threshold (90th percentile): {s_low:.4f}")
-        print(f"--- Active Threshold s = {s:.4f} ---")
-
-# --- Plotting and Confusion Matrix Calculation ---
-if s is not None:
-    fig, ax = plt.subplots(figsize=(18, 10))
-    TP, FP, TN, FN = 0, 0, 0, 0
-
-    predicted_good = []  # ✅ 收集未被截断的 trace
-    predicted_bad = []
-
-    traces_to_plot = random.sample(traces, min(len(traces), NUM_TRACES_TO_PLOT))
-
-    for trace in traces:
-        actual_is_correct = trace['is_correct']
-        conf_curve = trace['group_confidence']
-
-        stop_indices = np.where(np.array(conf_curve) < s)[0] if conf_curve else []
-        predicted_as_bad = len(stop_indices) > 0
-
-        # ✅ 保存分类结果
-        if predicted_as_bad:
-            predicted_bad.append(trace)
-        else:
-            predicted_good.append(trace)
-        # Update confusion matrix
-        if not actual_is_correct and predicted_as_bad: TP += 1
-        elif actual_is_correct and predicted_as_bad: FP += 1
-        elif actual_is_correct and not predicted_as_bad: TN += 1
-        elif not actual_is_correct and not predicted_as_bad: FN += 1
-    print("Positive Class: 'Bad Trace' (Incorrect Answer)")
-    print("Negative Class: 'Good Trace' (Correct Answer)\n")
-    print(f"{'':<15}{'Predicted: Bad':<20}{'Predicted: Good'}")
-    print(f"{'Actual: Bad':<15}{TP:<20}(TP){FN:<20}(FN)")
-    print(f"{'Actual: Good':<15}{FP:<20}(FP){TN:<20}(TN)")
-    print("-" * 60)
-
-    # Calculate and print metrics
-    accuracy = (TP + TN) / (TP + FP + TN + FN) if (TP + FP + TN + FN) > 0 else 0
-    precision = TP / (TP + FP) if (TP + FP) > 0 else 0
-    recall = TP / (TP + FN) if (TP + FN) > 0 else 0
-
-    print(f"Accuracy: {accuracy:.2%}")
-    print(f"Precision (for bad traces): {precision:.2%}")
-    print(f"Recall (for bad traces): {recall:.2%}")
-
-    # --- ✅ Show Predicted Good Answers ---
-    print("\n--- Answers from Predicted Good Traces ---")
-    good_answers = [t["answer"] for t in predicted_good if t.get("answer") is not None]
-    if good_answers:
-        from collections import Counter
-        counts = Counter(good_answers)
-        for ans, cnt in counts.most_common(15):  # 只打印前 15 个最常见的
-            print(f"{ans!r:40s}  →  {cnt} traces")
-        # ✅ 仅保留前 5 个最常见答案及其所有 trace
-        # 查询traces数量中最大的五个数
-        answer_number_sorted = sorted(set(counts.values()), reverse=True)
-        print(answer_number_sorted[:min(5, len(answer_number_sorted))])
-        top5_answers = [ans for ans, cnt in counts.items() if cnt in answer_number_sorted[:min(5, len(answer_number_sorted))]]
-        filtered_traces = [t for t in predicted_good if t.get("answer") in top5_answers]
-
-        print(f"\n✅ Kept {len(filtered_traces)} traces belonging to top 5 answers, answers are: {top5_answers}")
+    if data:
+        traces = data.get('traces', [])
+        question = data.get('question', [])
+        print(f"\nSuccessfully loaded and merged data for QID {args.question_id}.")
+        print(f"Total traces found: {len(traces)}")
     else:
-        print("No predicted good traces found.")
-    predicted_good = filtered_traces
-########### INITIALIZE DEEP THINK LLM ###########
+        print(f"\nERROR: Could not load data from {file_path}")
+        traces = []
 
-deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
+    ######### SCREENING #########
 
-# --- 使用已有的 JSONL 数据进行追问 ---
-# 1. 提取第一轮的上下文
-# 假设我们选择第一条 trace (trace_id: 0) 作为上下文
+    # --- Early Stopping Simulation Configuration ---
+    NUM_CALIBRATION_TRACES = 16
+    USE_LOW_THRESHOLD = False  # True: 10% percentile (lenient), False: 90% percentile (strict)
+    NUM_TRACES_TO_PLOT = 250
+    random.seed(13)
 
-all_traces_2=[]
-if good_answers:
-    # 所有候选答案
-    all_candidate_answers = top5_answers
+    # --- Calculate Threshold ---
+    s = None
+    if len(traces) >= NUM_CALIBRATION_TRACES:
+        calibration_traces = random.sample(traces, NUM_CALIBRATION_TRACES)
+        lowest_confs = [min(t['group_confidence']) for t in calibration_traces if t['group_confidence']]
+        if lowest_confs:
+            s_high = np.percentile(lowest_confs, 10)
+            s_low = np.percentile(lowest_confs, 90)
+            s = s_high if USE_LOW_THRESHOLD else s_low
+            print(f"--- Early Stopping Simulation ---")
+            print(f"Threshold computed from {len(lowest_confs)} calibration samples.")
+            print(f"  - High Threshold (10th percentile): {s_high:.4f}")
+            print(f"  - Low Threshold (90th percentile): {s_low:.4f}")
+            print(f"--- Active Threshold s = {s:.4f} ---")
 
-    print("\n=== Generating Self-Check Prompts for Each Candidate Answer ===")
+    # --- Plotting and Confusion Matrix Calculation ---
+    if s is not None:
+        TP, FP, TN, FN = 0, 0, 0, 0
 
-    for current_answer in all_candidate_answers:
-        # 取该答案对应的good traces
-        current_answer_number = counts[current_answer]
-        same_answer_traces = [t for t in predicted_good if t.get("answer") == current_answer]
-        if not same_answer_traces:
-            continue
+        predicted_good = []  # ✅ 收集未被截断的 trace
+        predicted_bad = []
 
-        # 随机抽一个trace作为base
-        base_trace = random.choice(same_answer_traces)
-        trace_1_tokens = base_trace.get("tokens", "(Reasoning trace missing...)")
-        # 其他每个答案都抽一个trace，并且从他们的回答中用split_thinking_and_answer提取回答的部分，返回的结果是{}
-        other_answers = [ans for ans in all_candidate_answers if ans != current_answer]
-        other_answers_text = {}
-        for ans in other_answers:
-            ans_trace = random.choice([t for t in predicted_good if t.get("answer") == ans])
-            ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_trace.get("tokens", "(Reasoning trace missing...)"))
-            _, ans_only = split_thinking_and_answer(ans_text)
-            other_answers_text[ans] = ans_only
+        traces_to_plot = random.sample(traces, min(len(traces), NUM_TRACES_TO_PLOT))
 
-        # 2. **关键步骤**: 将 tokens 列表转换回字符串
-        #    我们使用 tokenizer 的 convert_tokens_to_string 方法
-        trace_1_string = deep_llm.tokenizer.convert_tokens_to_string(trace_1_tokens)
+        for trace in traces:
+            actual_is_correct = trace['is_correct']
+            conf_curve = trace['group_confidence']
 
-        # 3. 准备我们的追问
-        follow_up_question = build_follow_up_question(current_answer, current_answer_number, other_answers_text, dict(counts.most_common(5)))
-        # 4. 构建包含完整历史的消息列表
-        #    [user_q1, assistant_a1, user_q2]
-        messages_turn_2 = [
-            {"role": "system", "content": "该助手为DeepSeek-R1，由深度求索公司创造。\n今天是2025年5月28日，星期一。\n"},
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": trace_1_string}, # 使用我们刚刚转换好的字符串
-            {"role": "user", "content": follow_up_question}
-        ]
+            stop_indices = np.where(np.array(conf_curve) < s)[0] if conf_curve else []
+            predicted_as_bad = len(stop_indices) > 0
 
-        # 5. 应用聊天模板，生成包含上下文的第二轮 prompt
-        prompt_2 = deep_llm.tokenizer.apply_chat_template(
-            messages_turn_2,
-            tokenize=False,
-            add_generation_prompt=True
-        )
+            # ✅ 保存分类结果
+            if predicted_as_bad:
+                predicted_bad.append(trace)
+            else:
+                predicted_good.append(trace)
+            # Update confusion matrix
+            if not actual_is_correct and predicted_as_bad: TP += 1
+            elif actual_is_correct and predicted_as_bad: FP += 1
+            elif actual_is_correct and not predicted_as_bad: TN += 1
+            elif not actual_is_correct and not predicted_as_bad: FN += 1
+        print("Positive Class: 'Bad Trace' (Incorrect Answer)")
+        print("Negative Class: 'Good Trace' (Correct Answer)\n")
+        print(f"{'':<15}{'Predicted: Bad':<20}{'Predicted: Good'}")
+        print(f"{'Actual: Bad':<15}{TP:<20}(TP){FN:<20}(FN)")
+        print(f"{'Actual: Good':<15}{FP:<20}(FP){TN:<20}(TN)")
+        print("-" * 60)
 
-        # 6. 调用 vLLM 获取追问的回答
-        sampling_params = SamplingParams(temperature=0.6, max_tokens=64000)
-        outputs_2 = deep_llm.generate(prompt_2, sampling_params)
-        trace_2 = outputs_2[0].outputs[0].text
-        all_traces_2.append({
-            "base_trace_id": base_trace["trace_id"],
-            "current_answer": current_answer,
-            "other_answers": other_answers,
-            "trace_2": trace_2
-        })
-# write to file
-with open(f'trace_data/pool_information/aime_2025_{TARGET_QID}_deepconflow_self_check.jsonl', 'w', encoding='utf-8') as f:
-    for item in all_traces_2:
-        f.write(json.dumps(item, ensure_ascii=False) + '\n')
+        # Calculate and print metrics
+        accuracy = (TP + TN) / (TP + FP + TN + FN) if (TP + FP + TN + FN) > 0 else 0
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0
+        recall = TP / (TP + FN) if (TP + FN) > 0 else 0
+
+        print(f"Accuracy: {accuracy:.2%}")
+        print(f"Precision (for bad traces): {precision:.2%}")
+        print(f"Recall (for bad traces): {recall:.2%}")
+
+        # --- ✅ Show Predicted Good Answers ---
+        print("\n--- Answers from Predicted Good Traces ---")
+        good_answers = [t["answer"] for t in predicted_good if t.get("answer") is not None]
+        if good_answers:
+            from collections import Counter
+            counts = Counter(good_answers)
+            for ans, cnt in counts.most_common(15):  # 只打印前 15 个最常见的
+                print(f"{ans!r:40s}  →  {cnt} traces")
+            # ✅ 仅保留前 5 个最常见答案及其所有 trace
+            # 查询traces数量中最大的五个数
+            answer_number_sorted = sorted(set(counts.values()), reverse=True)
+            print(answer_number_sorted[:min(5, len(answer_number_sorted))])
+            top5_answers = [ans for ans, cnt in counts.items() if cnt in answer_number_sorted[:min(5, len(answer_number_sorted))]]
+            filtered_traces = [t for t in predicted_good if t.get("answer") in top5_answers]
+
+            print(f"\n✅ Kept {len(filtered_traces)} traces belonging to top 5 answers, answers are: {top5_answers}")
+        else:
+            print("No predicted good traces found.")
+        predicted_good = filtered_traces
+    ########### INITIALIZE DEEP THINK LLM ###########
+
+    deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
+
+    # --- 使用已有的 JSONL 数据进行追问 ---
+    # 1. 提取第一轮的上下文
+    # 假设我们选择第一条 trace (trace_id: 0) 作为上下文
+
+    all_traces_2=[]
+    if good_answers:
+        # 所有候选答案
+        all_candidate_answers = top5_answers
+
+        print("\n=== Generating Self-Check Prompts for Each Candidate Answer ===")
+
+        for current_answer in all_candidate_answers:
+            # 取该答案对应的good traces
+            current_answer_number = counts[current_answer]
+            same_answer_traces = [t for t in predicted_good if t.get("answer") == current_answer]
+            if not same_answer_traces:
+                continue
+
+            # 随机抽一个trace作为base
+            base_trace = random.choice(same_answer_traces)
+            trace_1_tokens = base_trace.get("tokens", "(Reasoning trace missing...)")
+            # 其他每个答案都抽一个trace，并且从他们的回答中用split_thinking_and_answer提取回答的部分，返回的结果是{}
+            other_answers = [ans for ans in all_candidate_answers if ans != current_answer]
+            other_answers_text = {}
+            for ans in other_answers:
+                ans_trace = random.choice([t for t in predicted_good if t.get("answer") == ans])
+                ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_trace.get("tokens", "(Reasoning trace missing...)"))
+                _, ans_only = split_thinking_and_answer(ans_text)
+                other_answers_text[ans] = ans_only
+
+            # 2. **关键步骤**: 将 tokens 列表转换回字符串
+            #    我们使用 tokenizer 的 convert_tokens_to_string 方法
+            trace_1_string = deep_llm.tokenizer.convert_tokens_to_string(trace_1_tokens)
+
+            # 3. 准备我们的追问
+            follow_up_question = build_follow_up_question(current_answer, current_answer_number, other_answers_text, dict(counts.most_common(5)))
+            # 4. 构建包含完整历史的消息列表
+            #    [user_q1, assistant_a1, user_q2]
+            messages_turn_2 = [
+                {"role": "system", "content": "该助手为DeepSeek-R1，由深度求索公司创造。\n今天是2025年5月28日，星期一。\n"},
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": trace_1_string}, # 使用我们刚刚转换好的字符串
+                {"role": "user", "content": follow_up_question}
+            ]
+
+            # 5. 应用聊天模板，生成包含上下文的第二轮 prompt
+            prompt_2 = deep_llm.tokenizer.apply_chat_template(
+                messages_turn_2,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            # 6. 调用 vLLM 获取追问的回答
+            sampling_params = SamplingParams(temperature=0.6, max_tokens=64000)
+            outputs_2 = deep_llm.generate(prompt_2, sampling_params)
+            trace_2 = outputs_2[0].outputs[0].text
+            all_traces_2.append({
+                "base_trace_id": base_trace["trace_id"],
+                "base_summary": trace_1_string, 
+                "base_answer": current_answer,
+                "other_answers": other_answers,
+                "trace_2": trace_2
+            })
+    # write to file
+    with open(f'trace_data/pool_information_v2/aime_2025_{args.question_id}_deepconflow_self_check.jsonl', 'w', encoding='utf-8') as f:
+        for item in all_traces_2:
+            f.write(json.dumps(item, ensure_ascii=False) + '\n')
+if __name__ == '__main__':
+    main()
