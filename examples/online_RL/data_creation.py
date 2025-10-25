@@ -198,7 +198,8 @@ def main():
 
             processed_traces.append({
                 "trace_id": len(processed_traces),  # 使用连续的ID
-                "tokens": deep_llm.tokenizer.convert_ids_to_tokens(token_ids),
+                # "tokens": deep_llm.tokenizer.convert_ids_to_tokens(token_ids),
+                "text": trace_output.text,
                 "group_confidence": group_confidences,
                 # "trace_confidence" field is now removed
                 "answer": answer_text,

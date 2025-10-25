@@ -85,14 +85,13 @@ def build_follow_up_question(current_answer, current_count, other_answers, answe
     # 1️⃣ 整理其他答案内容
     other_lines = []
     for i, (ans, text) in enumerate(other_answers.items(), start=1):
-        count_info = f"(supported by {answer_counts.get(ans, 1)} traces)"
-        other_lines.append(f"{i}. Candidate answer {ans} {count_info}:\n{text.strip()}\n")
+        # count_info = f"(supported by {answer_counts.get(ans, 1)} traces)"
+        other_lines.append(f"{i}. Candidate answer {ans}:\n{text.strip()}\n")
     other_answers_text = "\n".join(other_lines)
 
     # 2️⃣ 主体 prompt
     follow_up_question = f"""
-Previously, you concluded the final answer was: {current_answer} 
-(supported by {current_count} trace{'s' if current_count > 1 else ''}).
+Previously, you concluded the final answer was: {current_answer}.
 
 Below are other candidate answers produced by other independent reasoning traces, each with a short summary of its reasoning and the number of traces that reached it:
 {other_answers_text}
@@ -122,6 +121,8 @@ def parse_args():
                         help="LLM model name to use.")
     parser.add_argument("--question_id", type=int, required=True,
                         help="AIME problem ID (for logging).")
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Directory to save output traces.")
 
     return parser.parse_args()
 # --- 4. Load the Target File ---
@@ -291,7 +292,8 @@ def main():
                 "trace_2": trace_2
             })
     # write to file
-    with open(f'trace_data/pool_information_v2/aime_2025_{args.question_id}_deepconflow_self_check.jsonl', 'w', encoding='utf-8') as f:
+    os.makedirs(args.output_dir, exist_ok=True)
+    with open(f'{args.output_dir}/aime_2025_{args.question_id}_deepconflow_self_check.jsonl', 'w', encoding='utf-8') as f:
         for item in all_traces_2:
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 if __name__ == '__main__':
