@@ -8,7 +8,7 @@ log probabilities, guaranteeing full floating-point precision.
 After generation, it prints a summary of the top 5 most frequent answers.
 
 Usage example (per question on SLURM):
-  srun python generate_trace_dataset.py --dataset aime25.jsonl --qid $SLURM_ARRAY_TASK_ID --budget 256 --output_file ./trace_data/aime25_${SLURM_ARRAY_TASK_ID}.jsonl
+  srun python generate_trace_dataset.py --dataset aime25.jsonl --qid $SLURM_ARRAY_TASK_ID --budget 256 --output_path ./trace_data/aime25_${SLURM_ARRAY_TASK_ID}.jsonl
 """
 
 import os
@@ -135,7 +135,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--top_k", type=int, default=0)
-    parser.add_argument("--output_file", type=str, required=True)
+    parser.add_argument("--output_path", type=str, required=True)
     args = parser.parse_args()
 
     print(f"[INFO] Loading dataset from {args.dataset}")
@@ -237,22 +237,21 @@ def main():
     #     print(f"[ERROR] Failed to write to output file: {e}")
 
     # --- Save in standard JSONL format ---
-    output_path = args.output_file
     try:
-        with open(output_path, "w", encoding="utf-8") as f:
+        with open(args.output_path, "w", encoding="utf-8") as f:
             for trace in processed_traces:
                 record = {
                     "question_id": question_id_str,
                     "question": question,
                     "ground_truth": ground_truth,
                     "trace_id": trace["trace_id"],
-                    "tokens": trace["tokens"],
+                    "text": trace["text"],
                     "group_confidence": trace["group_confidence"],
                     "answer": trace["answer"],
                     "is_correct": trace["is_correct"]
                 }
                 f.write(json.dumps(record) + "\n")
-        print(f"[SUCCESS] Wrote {len(processed_traces)} traces (JSONL) to {output_path}")
+        print(f"[SUCCESS] Wrote {len(processed_traces)} traces (JSONL) to {args.output_path}")
     except IOError as e:
         print(f"[ERROR] Failed to write to output file: {e}")
 

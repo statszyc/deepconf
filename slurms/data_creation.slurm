@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=19:00:00
 #SBATCH --output=logs/%A_%a.log
-#SBATCH --array=10
+#SBATCH --array=0-19
 
 # ---- 1. 加载必要模块 ----
 module load CUDA/12.8.0
@@ -25,9 +25,10 @@ date
 # ======================
 # 🔹 Trace 分批生成逻辑
 # ======================
-DATASET="aime_2025.jsonl"
+DATASET_NAME="brumo_2025"
+DATASET="/home/yz54720/Projects/Method/deepconf/data/raw/${DATASET_NAME}.jsonl"
 QID=${SLURM_ARRAY_TASK_ID}
-OUTDIR="trace_data_3"
+OUTDIR="/home/yz54720/Projects/Method/deepconf/data/processed/${DATASET_NAME}/traces"
 mkdir -p ${OUTDIR}
 
 TOTAL_TRACE=256
@@ -50,7 +51,7 @@ for ((i=0; i<NUM_BATCHES; i++)); do
         --dataset ${DATASET} \
         --qid ${QID} \
         --budget ${BATCH_SIZE} \
-        --output_file ${OUTFILE}; then
+        --output_path ${OUTFILE}; then
         echo "[$(date)] Successfully finished batch $i"
     else
         echo "[ERROR] Failed to generate batch $i for QID=${QID}"
@@ -59,12 +60,12 @@ for ((i=0; i<NUM_BATCHES; i++)); do
 done
 
 # ---- 5. 合并分批结果 ----
-FINAL_FILE="${OUTDIR}/aime_2025_${QID}_full.jsonl"
+FINAL_FILE="${OUTDIR}/${DATASET_NAME}_${QID}_full.jsonl"
 echo "[INFO] Merging all parts for QID=${QID}"
 
 # 更安全的合并方式，只合并当前QID的文件
-if ls ${OUTDIR}/aime_2025_${QID}_part*.jsonl 1> /dev/null 2>&1; then
-    for f in ${OUTDIR}/aime_2025_${QID}_part*.jsonl; do
+if ls ${OUTDIR}/${DATASET_NAME}_${QID}_part*.jsonl 1> /dev/null 2>&1; then
+    for f in ${OUTDIR}/${DATASET_NAME}_${QID}_part*.jsonl; do
         cat "$f" >> ${FINAL_FILE}
         echo >> ${FINAL_FILE}
     done

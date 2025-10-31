@@ -1,6 +1,6 @@
 import argparse
 from deepconf import DeepThinkLLM
-from vllm import SamplingParams
+from vllm import SamplingParams, LLM
 
 # 假设 deep_llm 实例和第一轮的 traces 数据已经准备好
 # deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
@@ -19,26 +19,6 @@ random.seed(13)
 # --- 1. 配置 ---
 # --- 2. 将工作目录设置为项目根目录 (如果需要) ---
 os.chdir(os.path.expanduser('~/Projects/Method/deepconf'))
-
-# --- 3. Robust Data Loading Function ---
-def split_thinking_and_answer(text):
-    """
-    拆分 <think> ... </think> 结构，返回 (reasoning, answer)，
-    并去掉末尾的 <｜end▁of▁sentence｜>。
-    """
-    # 匹配 <think> ... </think>
-    match = re.search(r"<think>(.*?)</think>(.*)", text, flags=re.DOTALL)
-    if match:
-        reasoning = match.group(1).strip()
-        answer = match.group(2).strip()
-    else:
-        reasoning = ""
-        answer = text.strip()
-
-    # 去除结尾的特殊符号（包含可能的空格或换行）
-    answer = re.sub(r"<\s*[\|｜]\s*end▁of▁sentence\s*[\|｜]\s*>", "", answer, flags=re.IGNORECASE).strip()
-
-    return reasoning, answer
 
 def load_concatenated_json(file_path):
     """
@@ -225,9 +205,9 @@ def main():
             print("No predicted good traces found.")
         predicted_good = filtered_traces
     ########### INITIALIZE DEEP THINK LLM ###########
-
+    # TODO: 不能同时启用两个，不然显存不够
     deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
-
+    summarizer = LLM(model="Qwen/Qwen2.5-Math-7B-Instruct")  # reasoning summarizer
     # --- 使用已有的 JSONL 数据进行追问 ---
     # 1. 提取第一轮的上下文
     # 假设我们选择第一条 trace (trace_id: 0) 作为上下文
@@ -235,11 +215,11 @@ def main():
     all_traces_2=[]
     if good_answers:
         # 所有候选答案
-        all_candidate_answers = top5_answers
+        # all_candidate_answers = top5_answers
 
         print("\n=== Generating Self-Check Prompts for Each Candidate Answer ===")
 
-        for current_answer in all_candidate_answers:
+        for current_answer in top5_answers:
             # 取该答案对应的good traces
             current_answer_number = counts[current_answer]
             same_answer_traces = [t for t in predicted_good if t.get("answer") == current_answer]
@@ -250,13 +230,54 @@ def main():
             base_trace = random.choice(same_answer_traces)
             trace_1_tokens = base_trace.get("tokens", "(Reasoning trace missing...)")
             # 其他每个答案都抽一个trace，并且从他们的回答中用split_thinking_and_answer提取回答的部分，返回的结果是{}
-            other_answers = [ans for ans in all_candidate_answers if ans != current_answer]
+            other_answers = [ans for ans in top5_answers if ans != current_answer]
             other_answers_text = {}
+        #     for ans in other_answers:
+        #         ans_trace = random.choice([t for t in predicted_good if t.get("answer") == ans])
+        #         ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_trace.get("tokens", "(Reasoning trace missing...)"))
+        #         _, ans_only = split_thinking_and_answer(ans_text)
+        #         other_answers_text[ans] = ans_only
+
+        # for current_answer in top5_answers:
+        #     same_answer_traces = [t for t in filtered_traces if t["answer"] == current_answer]
+        #     if not same_answer_traces:
+        #         continue
+        #     base_trace = random.choice(same_answer_traces)
+        #     trace_1_tokens = base_trace.get("tokens", [])
+        #     trace_1_string = deep_llm.tokenizer.convert_tokens_to_string(trace_1_tokens)
+
+        #     # 🔹 对其他答案做 summary
+        #     other_answers = [a for a in top5_answers if a != current_answer]
+        #     other_answers_text = {}
             for ans in other_answers:
-                ans_trace = random.choice([t for t in predicted_good if t.get("answer") == ans])
-                ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_trace.get("tokens", "(Reasoning trace missing...)"))
-                _, ans_only = split_thinking_and_answer(ans_text)
-                other_answers_text[ans] = ans_only
+                ans_trace = random.choice([t for t in filtered_traces if t["answer"] == ans])
+                ans_tokens = ans_trace.get("tokens", [])
+                ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_tokens)
+                # reasoning, _ = split_thinking_and_answer(ans_text)
+
+                summarizer_prompt = f"""
+    You are given a reasoning trace produced by a math model.
+    Please summarize the *key reasoning steps* clearly and concisely, keeping the essential logic
+    but omitting redundant details or exploratory thoughts.
+
+    Requirements:
+    - Write in complete sentences.
+    - Keep the total summary under **500 tokens**.
+    - End with the model’s **final numerical or symbolic answer**, enclosed in LaTeX format:
+    **Final Answer: \\boxed{{X}}**
+    - If the reasoning trace does not contain a valid answer, output: **Final Answer: \\boxed{{None}}**
+    - Do not include any unrelated text or commentary.
+
+    Here is the reasoning trace:
+    ---
+    {ans_text}
+    ---
+    Now produce your concise summary:
+    """
+
+                summary_output = summarizer.generate(summarizer_prompt, SamplingParams(max_tokens=512, temperature=0.4))
+                summary_text = summary_output[0].outputs[0].text.strip()
+                other_answers_text[ans] = summary_text
 
             # 2. **关键步骤**: 将 tokens 列表转换回字符串
             #    我们使用 tokenizer 的 convert_tokens_to_string 方法
