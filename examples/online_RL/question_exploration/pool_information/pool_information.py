@@ -13,6 +13,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import Counter
 import re
+from typing import List, Dict, Any
 random.seed(13)
 
 ######### LOAD DATA #########
@@ -65,13 +66,14 @@ def build_follow_up_question(current_answer, current_count, other_answers, answe
     # 1️⃣ 整理其他答案内容
     other_lines = []
     for i, (ans, text) in enumerate(other_answers.items(), start=1):
-        # count_info = f"(supported by {answer_counts.get(ans, 1)} traces)"
-        other_lines.append(f"{i}. Candidate answer {ans}:\n{text.strip()}\n")
+        count_info = f"(supported by {answer_counts.get(ans, 1)} traces)"
+        other_lines.append(f"{i}. Candidate answer {ans} {count_info}:\n{text.strip()}\n")
     other_answers_text = "\n".join(other_lines)
 
     # 2️⃣ 主体 prompt
     follow_up_question = f"""
-Previously, you concluded the final answer was: {current_answer}.
+Previously, you concluded the final answer was: {current_answer} 
+(supported by {current_count} trace{'s' if current_count > 1 else ''}).
 
 Below are other candidate answers produced by other independent reasoning traces, each with a short summary of its reasoning and the number of traces that reached it:
 {other_answers_text}
@@ -94,38 +96,101 @@ Finally, output your decision in the exact format:
 """
     return follow_up_question.strip()
 
+def calculate_token_confs_from_logprobs(logprobs: List[Dict[int, Any]]) -> List[float]:
+    """
+    Calculates token confidences from raw vLLM logprobs with full precision.
+    """
+    token_confs = []
+    if not logprobs:
+        return token_confs
+        
+    for step_logprobs in logprobs:
+        if not step_logprobs:
+            continue
+        chosen_token_logprob = -float('inf')
+        for logprob_obj in step_logprobs.values():
+            chosen_token_logprob = max(chosen_token_logprob, logprob_obj.logprob)
+        
+        confidence = np.exp(chosen_token_logprob)
+        token_confs.append(confidence)
+        
+    return token_confs
+
+
+def compute_group_confidence_full_precision(confs: List[float], group_size: int) -> List[float]:
+    """Computes sliding window mean confidence with full floating-point precision."""
+    if not confs: return [0.0]
+    if len(confs) < group_size: return [sum(confs) / len(confs)]
+    
+    sliding_means = []
+    current_sum = sum(confs[:group_size])
+    sliding_means.append(current_sum / group_size)
+    
+    for i in range(len(confs) - group_size):
+        current_sum = current_sum - confs[i] + confs[i + group_size]
+        sliding_means.append(current_sum / group_size)
+        
+    return sliding_means
+def split_thinking_and_answer(text):
+    """
+    拆分 <think> ... </think> 结构，返回 (reasoning, answer)，
+    并去掉末尾的 <｜end▁of▁sentence｜>。
+    """
+    # 匹配 <think> ... </think>
+    match = re.search(r"<think>(.*?)</think>(.*)", text, flags=re.DOTALL)
+    if match:
+        reasoning = match.group(1).strip()
+        answer = match.group(2).strip()
+    else:
+        reasoning = ""
+        answer = text.strip()
+
+    # 去除结尾的特殊符号（包含可能的空格或换行）
+    answer = re.sub(r"<\s*[\|｜]\s*end▁of▁sentence\s*[\|｜]\s*>", "", answer, flags=re.IGNORECASE).strip()
+
+    return reasoning, answer
 def parse_args():
     parser = argparse.ArgumentParser(description="Run follow-up self-check experiment")
 
     parser.add_argument("--model", type=str, default="deepseek-r1-qwen-8b",
                         help="LLM model name to use.")
+    parser.add_argument("--data_name", type=str, default="aime_2025")
     parser.add_argument("--question_id", type=int, required=True,
                         help="AIME problem ID (for logging).")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to save output traces.")
+    parser.add_argument("--window_size", type=int, default=2048,
+                        help="Window size for computing group confidence.")
 
     return parser.parse_args()
 # --- 4. Load the Target File ---
 def main():
     args = parse_args()
-    file_path = f'trace_data/aime_2025_{args.question_id}_full.jsonl'
-    data = load_concatenated_json(file_path)
+    import json
 
-    if data:
-        traces = data.get('traces', [])
-        question = data.get('question', [])
-        print(f"\nSuccessfully loaded and merged data for QID {args.question_id}.")
-        print(f"Total traces found: {len(traces)}")
-    else:
-        print(f"\nERROR: Could not load data from {file_path}")
-        traces = []
+    path = f"data/processed/{args.data_name}/traces/{args.data_name}_{args.question_id}_full.jsonl" 
+    traces = []
+
+    with open(path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                traces.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] 第 {i} 行解析失败: {e}")
+                break
+
+    print(f"[INFO] 成功加载 {len(traces)} 条记录")
+
+    question = traces[0].get("question", "Question text not found.")
 
     ######### SCREENING #########
 
     # --- Early Stopping Simulation Configuration ---
     NUM_CALIBRATION_TRACES = 16
     USE_LOW_THRESHOLD = False  # True: 10% percentile (lenient), False: 90% percentile (strict)
-    NUM_TRACES_TO_PLOT = 250
     random.seed(13)
 
     # --- Calculate Threshold ---
@@ -149,8 +214,6 @@ def main():
 
         predicted_good = []  # ✅ 收集未被截断的 trace
         predicted_bad = []
-
-        traces_to_plot = random.sample(traces, min(len(traces), NUM_TRACES_TO_PLOT))
 
         for trace in traces:
             actual_is_correct = trace['is_correct']
@@ -207,7 +270,6 @@ def main():
     ########### INITIALIZE DEEP THINK LLM ###########
     # TODO: 不能同时启用两个，不然显存不够
     deep_llm = DeepThinkLLM(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B")
-    summarizer = LLM(model="Qwen/Qwen2.5-Math-7B-Instruct")  # reasoning summarizer
     # --- 使用已有的 JSONL 数据进行追问 ---
     # 1. 提取第一轮的上下文
     # 假设我们选择第一条 trace (trace_id: 0) 作为上下文
@@ -228,60 +290,16 @@ def main():
 
             # 随机抽一个trace作为base
             base_trace = random.choice(same_answer_traces)
-            trace_1_tokens = base_trace.get("tokens", "(Reasoning trace missing...)")
+            trace_1_string = base_trace.get("text", "(Reasoning trace missing...)")
             # 其他每个答案都抽一个trace，并且从他们的回答中用split_thinking_and_answer提取回答的部分，返回的结果是{}
             other_answers = [ans for ans in top5_answers if ans != current_answer]
             other_answers_text = {}
-        #     for ans in other_answers:
-        #         ans_trace = random.choice([t for t in predicted_good if t.get("answer") == ans])
-        #         ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_trace.get("tokens", "(Reasoning trace missing...)"))
-        #         _, ans_only = split_thinking_and_answer(ans_text)
-        #         other_answers_text[ans] = ans_only
-
-        # for current_answer in top5_answers:
-        #     same_answer_traces = [t for t in filtered_traces if t["answer"] == current_answer]
-        #     if not same_answer_traces:
-        #         continue
-        #     base_trace = random.choice(same_answer_traces)
-        #     trace_1_tokens = base_trace.get("tokens", [])
-        #     trace_1_string = deep_llm.tokenizer.convert_tokens_to_string(trace_1_tokens)
-
-        #     # 🔹 对其他答案做 summary
-        #     other_answers = [a for a in top5_answers if a != current_answer]
-        #     other_answers_text = {}
             for ans in other_answers:
-                ans_trace = random.choice([t for t in filtered_traces if t["answer"] == ans])
-                ans_tokens = ans_trace.get("tokens", [])
-                ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_tokens)
-                # reasoning, _ = split_thinking_and_answer(ans_text)
-
-                summarizer_prompt = f"""
-    You are given a reasoning trace produced by a math model.
-    Please summarize the *key reasoning steps* clearly and concisely, keeping the essential logic
-    but omitting redundant details or exploratory thoughts.
-
-    Requirements:
-    - Write in complete sentences.
-    - Keep the total summary under **500 tokens**.
-    - End with the model’s **final numerical or symbolic answer**, enclosed in LaTeX format:
-    **Final Answer: \\boxed{{X}}**
-    - If the reasoning trace does not contain a valid answer, output: **Final Answer: \\boxed{{None}}**
-    - Do not include any unrelated text or commentary.
-
-    Here is the reasoning trace:
-    ---
-    {ans_text}
-    ---
-    Now produce your concise summary:
-    """
-
-                summary_output = summarizer.generate(summarizer_prompt, SamplingParams(max_tokens=512, temperature=0.4))
-                summary_text = summary_output[0].outputs[0].text.strip()
-                other_answers_text[ans] = summary_text
-
-            # 2. **关键步骤**: 将 tokens 列表转换回字符串
-            #    我们使用 tokenizer 的 convert_tokens_to_string 方法
-            trace_1_string = deep_llm.tokenizer.convert_tokens_to_string(trace_1_tokens)
+                ans_trace = random.choice([t for t in predicted_good if t.get("answer") == ans])
+                # ans_text = deep_llm.tokenizer.convert_tokens_to_string(ans_trace.get("tokens", "(Reasoning trace missing...)"))
+                ans_text = ans_trace.get("text", "(Reasoning trace missing...)")
+                _, ans_only = split_thinking_and_answer(ans_text)
+                other_answers_text[ans] = ans_only
 
             # 3. 准备我们的追问
             follow_up_question = build_follow_up_question(current_answer, current_answer_number, other_answers_text, dict(counts.most_common(5)))
@@ -305,16 +323,21 @@ def main():
             sampling_params = SamplingParams(temperature=0.6, max_tokens=64000)
             outputs_2 = deep_llm.generate(prompt_2, sampling_params)
             trace_2 = outputs_2[0].outputs[0].text
+            # 这里要改，logprobs什么都没有
+            raw_logprobs = outputs_2[0].outputs[0].logprobs
+            token_confidences = calculate_token_confs_from_logprobs(raw_logprobs)
+            group_confidences = compute_group_confidence_full_precision(token_confidences, args.window_size)
             all_traces_2.append({
                 "base_trace_id": base_trace["trace_id"],
                 "base_summary": trace_1_string, 
                 "base_answer": current_answer,
                 "other_answers": other_answers,
-                "trace_2": trace_2
+                "trace_2": trace_2, 
+                "group_confidences_2": group_confidences
             })
     # write to file
     os.makedirs(args.output_dir, exist_ok=True)
-    with open(f'{args.output_dir}/aime_2025_{args.question_id}_deepconflow_self_check.jsonl', 'w', encoding='utf-8') as f:
+    with open(f'{args.output_dir}/{args.data_name}_{args.question_id}_deepconflow_self_check.jsonl', 'w', encoding='utf-8') as f:
         for item in all_traces_2:
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 if __name__ == '__main__':

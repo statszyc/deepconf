@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=19:00:00
 #SBATCH --output=logs/%A_%a.log
-#SBATCH --array=0-19
+#SBATCH --array=18-24
 
 # ---- 1. 加载必要模块 ----
 module load CUDA/12.8.0
@@ -25,7 +25,7 @@ date
 # ======================
 # 🔹 Trace 分批生成逻辑
 # ======================
-DATASET_NAME="brumo_2025"
+DATASET_NAME="hmmt_2025"
 DATASET="/home/yz54720/Projects/Method/deepconf/data/raw/${DATASET_NAME}.jsonl"
 QID=${SLURM_ARRAY_TASK_ID}
 OUTDIR="/home/yz54720/Projects/Method/deepconf/data/processed/${DATASET_NAME}/traces"
@@ -36,7 +36,7 @@ BATCH_SIZE=64  # 每批生成64条 trace
 NUM_BATCHES=$((TOTAL_TRACE / BATCH_SIZE))
 
 for ((i=0; i<NUM_BATCHES; i++)); do
-    OUTFILE="${OUTDIR}/aime_2025_${QID}_part${i}.jsonl"
+    OUTFILE="${OUTDIR}/${DATASET_NAME}_${QID}_part${i}.jsonl"
 
     # 若文件已存在则跳过（支持断点续跑）
     if [ -f "${OUTFILE}" ]; then
@@ -73,7 +73,7 @@ if ls ${OUTDIR}/${DATASET_NAME}_${QID}_part*.jsonl 1> /dev/null 2>&1; then
     
     # 清理临时文件
     echo "[INFO] Cleaning up temporary part files..."
-    rm ${OUTDIR}/aime_2025_${QID}_part*.jsonl
+    rm ${OUTDIR}/${DATASET_NAME}_${QID}_part*.jsonl
     echo "[INFO] Cleanup completed"
 else
     echo "[WARNING] No part files found for QID=${QID}"

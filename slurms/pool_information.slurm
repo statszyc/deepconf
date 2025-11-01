@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=pool_v22
+#SBATCH --job-name=pooling
 #SBATCH --partition=gpu_p
 #SBATCH --gres=gpu:A100:1
 #SBATCH --ntasks=1
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=8:00:00
 #SBATCH --output=logs/%A_%a.log
-#SBATCH --array=0-18
+#SBATCH --array=16-29
 
 # ---- 1. 加载必要模块 ----
 module load CUDA/12.8.0
@@ -22,8 +22,9 @@ nvidia-smi
 
 # ---- 4. 运行程序，使用数组索引当作 qid ----
 QID=${SLURM_ARRAY_TASK_ID}
-OUT_DIR="trace_data/pool_information_v4"
-OUT_PATH="${OUT_DIR}/aime_2025_${QID}_deepconflow_self_check.jsonl"
+DATASET_NAME="brumo_2025"
+OUT_DIR="data/processed/${DATASET_NAME}/pool_information_v1"
+OUT_PATH="${OUT_DIR}/${DATASET_NAME}_${QID}_deepconflow_self_check.jsonl"
 
 if [ -f "$OUT_PATH" ]; then
     echo "✅ Skipping question ${QID}: result already exists at ${OUT_PATH}"
@@ -34,5 +35,6 @@ fi
 echo "🚀 Running follow-up self-check for question ${QID}"
 python examples/online_RL/question_exploration/pool_information/pool_information.py \
     --question_id "$QID" \
-    --output_dir "$OUT_DIR" 
+    --output_dir "$OUT_DIR" \
+    --data_name "$DATASET_NAME"
 
