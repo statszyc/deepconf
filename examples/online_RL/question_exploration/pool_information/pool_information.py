@@ -319,7 +319,7 @@ def main():
             )
 
             # 6. 调用 vLLM 获取追问的回答
-            sampling_params = SamplingParams(temperature=0.6, max_tokens=64000)
+            sampling_params = SamplingParams(temperature=0.6, max_tokens=64000, top_p=0.95, top_k=0, logprobs=20)
             outputs_2 = deep_llm.generate(prompt_2, sampling_params)
             trace_2 = outputs_2[0].outputs[0].text
             # 这里要改，logprobs什么都没有
