@@ -5,10 +5,11 @@ import pandas as pd
 from pathlib import Path
 
 # ========== 配置部分 ==========
-BASE_DIR = Path("/home/yz54720/Projects/Method/deepconf/trace_data/pool_information_v3")
-AIME_DATA_PATH = Path("/home/yz54720/Projects/Method/deepconf/aime_2025.jsonl")
+DATA_NAME = "brumo_2025"
+BASE_DIR = Path(f"/home/yz54720/Projects/Method/deepconf/data/processed/{DATA_NAME}/pool_information_v1")
+AIME_DATA_PATH = Path(f"/home/yz54720/Projects/Method/deepconf/data/raw/{DATA_NAME}.jsonl")
 OUTPUT_CSV = BASE_DIR / "followup_evaluation_summary.csv"
-FILE_PATTERN = "aime_2025_*_deepconflow_self_check.jsonl"
+FILE_PATTERN = f"{DATA_NAME}_*_deepconflow_self_check.jsonl"
 
 # ========== 工具函数 ==========
 
@@ -77,7 +78,7 @@ def main():
     gt_dict = load_ground_truth(AIME_DATA_PATH)
 
     for f in sorted(files):
-        qid_match = re.search(r"aime_2025_(\d+)_", f.name)
+        qid_match = re.search(r".*_(\d+)_deepconflow_self_check", f.name)
         qid = int(qid_match.group(1)) if qid_match else None
 
         file_results = extract_followup_answers(f, qid)
